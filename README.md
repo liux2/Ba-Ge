@@ -33,20 +33,24 @@ I built this specifically around Scribe for one reason: **it's genuinely good at
 professional Chinese–English bilingual speech.**
 
 Most of my dictation is code-switching — technical English terms dropped into
-Mandarin sentences, product names, domain jargon. In my own day-to-day testing,
-Scribe handled that mixed-language, professional content noticeably better than the
-alternatives:
+Mandarin sentences, product names, domain jargon. For a hold-to-talk tool, two
+things matter: **speed** (the text should appear the moment you release the key)
+and **accuracy on professional terms**. In my own day-to-day testing, the usual
+options each miss one of those:
 
-- **OpenAI Whisper** — strong overall, but stumbles on dense Chinese↔English
-  code-switching and tends to garble the switch points.
-- **Qwen-ASR / FireRedASR** — excellent on *pure* Mandarin, but weaker once English
-  terms and technical vocabulary are interleaved.
-- **Scribe** — the cleanest on mixed-language sentences, and its **custom-vocabulary
-  biasing** (keyterms) works across *both* languages, so product names and jargon
-  come through correctly.
+- **Qwen-ASR / FireRedASR** — very accurate on Mandarin, but they're **LLM-based, so
+  they're slow** — a real problem for live dictation, where you don't want to wait
+  seconds after every phrase.
+- **OpenAI Whisper** — **fast**, but it drops professional/technical terms and proper
+  nouns, with no vocabulary biasing to correct them — and it garbles dense
+  Chinese↔English switch points.
+- **ElevenLabs Scribe** — **fast enough for live dictation** *and* clean on
+  mixed-language speech, and its **custom-vocabulary biasing** (keyterms) locks in
+  product names and jargon across *both* languages.
 
-If your speech is monolingual, a local/open model may suit you better. But for
-**bilingual professional dictation**, Scribe is why this project exists.
+So Scribe is the one that's both quick *and* right on bilingual professional speech —
+which is exactly why this project exists. (Monolingual? A local/open model may suit
+you better.)
 
 ## Features
 
