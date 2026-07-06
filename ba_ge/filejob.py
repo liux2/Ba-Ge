@@ -13,7 +13,7 @@ from pathlib import Path
 from . import platform
 from .transcribe import TranscriptionError, transcribe_verbose
 
-log = logging.getLogger("ptt.filejob")
+log = logging.getLogger("bage.filejob")
 
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".m4a", ".flac", ".ogg", ".oga", ".opus",
                     ".aac", ".wma", ".aiff", ".aif", ".mka", ".webm")
@@ -55,7 +55,7 @@ def prepare_audio(path) -> tuple[bytes, str, str]:
     exe = platform.ffmpeg_exe()
     for codec, ext, ctype in (("libmp3lame", ".mp3", "audio/mpeg"),
                               ("pcm_s16le", ".wav", "audio/wav")):
-        fd, tmp = tempfile.mkstemp(prefix="ptt-file-", suffix=ext)
+        fd, tmp = tempfile.mkstemp(prefix="bage-file-", suffix=ext)
         os.close(fd)
         try:
             proc = subprocess.run(build_ffmpeg_cmd(src, tmp, exe=exe, codec=codec),

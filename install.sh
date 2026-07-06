@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command installer for PTT Dictation on Linux (Debian/Ubuntu).
+# One-command installer for Ba-Ge on Linux (Debian/Ubuntu).
 #
 # Fully self-contained: a uv-managed standalone Python + PySide6 (Qt) in .venv.
 # It never installs into or touches the system Python — no python3-venv/pip/tk,
@@ -47,7 +47,7 @@ uv pip install -q --python .venv/bin/python -r requirements.txt
 BIN="$HOME/.local/bin"
 APPS="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons/hicolor/scalable/apps"
-LAUNCHER="$BIN/ptt-dictation"
+LAUNCHER="$BIN/ba-ge"
 mkdir -p "$BIN" "$APPS" "$ICONS"
 
 cat > "$LAUNCHER" <<EOF
@@ -56,21 +56,21 @@ export PYTHONUTF8=1
 export PYTHONPATH="$DIR\${PYTHONPATH:+:\$PYTHONPATH}"
 PY="$DIR/.venv/bin/python"
 [ -x "\$PY" ] || PY=python3
-exec "\$PY" -m ptt_dictation "\$@"
+exec "\$PY" -m ba_ge "\$@"
 EOF
 chmod +x "$LAUNCHER"
 
-cp "$DIR/packaging/ptt-dictation.svg" "$ICONS/ptt-dictation.svg"
+cp "$DIR/packaging/ba-ge.svg" "$ICONS/ba-ge.svg"
 
-cat > "$APPS/ptt-dictation.desktop" <<EOF
+cat > "$APPS/ba-ge.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=PTT Dictation
+Name=Ba-Ge
 GenericName=Voice Dictation
 Comment=Hold a key to dictate with ElevenLabs Scribe
 Exec=$LAUNCHER
-Icon=$ICONS/ptt-dictation.svg
+Icon=$ICONS/ba-ge.svg
 Terminal=false
 Categories=Utility;
 Keywords=dictation;voice;speech;transcribe;microphone;scribe;
@@ -88,11 +88,11 @@ command -v gtk-update-icon-cache >/dev/null && \
 
 cat <<EOF
 
-Installed.  "PTT Dictation" now appears in Activities / the app grid.
+Installed.  "Ba-Ge" now appears in Activities / the app grid.
   1. Launch it (click the icon).
   2. Right-click the tray icon -> Settings -> paste your ElevenLabs API key.
   3. Hold your hotkey (F9) and speak.
 
-Command line: ptt-dictation   (add ~/.local/bin to PATH if needed)
+Command line: ba-ge   (add ~/.local/bin to PATH if needed)
 Uses its own bundled Python + Qt — nothing was installed into your system Python.
 EOF

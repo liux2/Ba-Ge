@@ -2,11 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ptt_dictation import app as _appmod
-from ptt_dictation.app import DictationApp
-from ptt_dictation.config import Config
-from ptt_dictation.state import State
-from ptt_dictation.transcribe import TranscriptionError
+from ba_ge import app as _appmod
+from ba_ge.app import DictationApp
+from ba_ge.config import Config
+from ba_ge.state import State
+from ba_ge.transcribe import TranscriptionError
 
 
 # 44-byte header + loud (0x2710) S16 samples so peak_amplitude() sees signal.

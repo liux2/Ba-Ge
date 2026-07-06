@@ -11,9 +11,9 @@ import logging
 import subprocess
 import sys
 
-log = logging.getLogger("ptt.notify")
+log = logging.getLogger("bage.notify")
 
-_APP_NAME = "PTT Dictation"
+_APP_NAME = "Ba-Ge"
 _win_toaster = None  # lazily created Windows toaster
 
 

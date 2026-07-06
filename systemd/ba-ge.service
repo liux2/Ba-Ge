@@ -5,8 +5,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/SynologyDrive/Dev/11labs/ptt-dictation
-ExecStart=/usr/bin/python3 -m ptt_dictation
+WorkingDirectory=%h/SynologyDrive/Dev/11labs/ba-ge
+ExecStart=/usr/bin/python3 -m ba_ge
 Restart=on-failure
 # Optionally provide the key here instead of config.toml:
 # Environment=ELEVENLABS_API_KEY=sk-...

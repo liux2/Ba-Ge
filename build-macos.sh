@@ -13,34 +13,34 @@ python3 -m pip install -U pyinstaller pynput sounddevice pyperclip pystray Pillo
 # A .spec is required to inject the Info.plist keys PyInstaller's CLI can't set:
 #   NSMicrophoneUsageDescription  -> or the mic silently records ZEROS (blocker)
 #   LSUIElement = True            -> menu-bar-only, no Dock icon / focus stealing
-cat > pttdictation-macos.spec <<'SPEC'
+cat > bage-macos.spec <<'SPEC'
 # -*- mode: python ; coding: utf-8 -*-
 a = Analysis(['packaging/entry.py'], pathex=['.'],
              hiddenimports=['pystray._darwin'], datas=[], binaries=[])
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, a.binaries, a.datas, name='PTT Dictation',
+exe = EXE(pyz, a.scripts, a.binaries, a.datas, name='Ba-Ge',
           console=False, disable_windowed_traceback=False)
-app = BUNDLE(exe, name='PTT Dictation.app',
-             bundle_identifier='com.ptt-dictation.app',
+app = BUNDLE(exe, name='Ba-Ge.app',
+             bundle_identifier='com.ba-ge.app',
              info_plist={
                  'NSMicrophoneUsageDescription':
-                     'PTT Dictation records your voice to transcribe it.',
+                     'Ba-Ge records your voice to transcribe it.',
                  'LSUIElement': True,
-                 'CFBundleName': 'PTT Dictation',
+                 'CFBundleName': 'Ba-Ge',
              })
 SPEC
 
-pyinstaller --noconfirm --clean pttdictation-macos.spec
+pyinstaller --noconfirm --clean bage-macos.spec
 
 cat <<EOF
 
-Built dist/PTT Dictation.app (UNVERIFIED).
+Built dist/Ba-Ge.app (UNVERIFIED).
 Next, per docs/PORTING.md (macOS):
   1. Grant Input Monitoring + Accessibility + Microphone (three separate TCC
      grants; all fail SILENTLY without them).
   2. Sign with a STABLE cert (grants reset on every unsigned rebuild):
        codesign --deep -o runtime --entitlements entitlements.plist \\
-         -s "Developer ID Application: ..." "dist/PTT Dictation.app"
+         -s "Developer ID Application: ..." "dist/Ba-Ge.app"
      Entitlements: com.apple.security.cs.allow-jit,
        allow-unsigned-executable-memory, disable-library-validation.
   3. Re-verify the mic prompt STILL appears after signing (classic regression).

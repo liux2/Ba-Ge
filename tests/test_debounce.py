@@ -1,6 +1,6 @@
 import unittest
 
-from ptt_dictation.debounce import HoldDebouncer
+from ba_ge.debounce import HoldDebouncer
 
 
 class FakeTimer:

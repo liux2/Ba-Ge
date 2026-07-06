@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build a fully SELF-CONTAINED .deb: a uv-managed standalone CPython + PySide6 (Qt)
-# + the app under /opt/ptt-dictation. Qt's wheels bundle their own libraries and
+# + the app under /opt/ba-ge. Qt's wheels bundle their own libraries and
 # QSystemTrayIcon speaks StatusNotifier natively, so this needs NO system Python,
 # NO python3-tk, and NO PyGObject/gi — only a few X client libs from apt.
 set -euo pipefail
@@ -8,11 +8,11 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-PKG=ptt-dictation
+PKG=ba-ge
 VERSION="${VERSION:-1.0.0}"
 ARCH=amd64
 PYVER=3.12
-PREFIX=/opt/ptt-dictation
+PREFIX=/opt/ba-ge
 
 # Linux runtime deps (no sounddevice/imageio-ffmpeg — those are macOS/Windows only).
 DEPS=(PySide6-Essentials pynput platformdirs pyperclip)
@@ -58,28 +58,28 @@ rm -rf "$Q"/Qt/plugins/qmltooling "$Q"/Qt/plugins/sqldrivers "$Q"/Qt/plugins/mul
 find "$APPDIR/site-packages" -depth -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 
 echo "==> Copying app source"
-cp -r "$DIR/ptt_dictation" "$APPDIR/ptt_dictation"
-find "$APPDIR/ptt_dictation" -depth -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
-cp "$DIR/packaging/ptt-dictation.svg" \
-   "$STAGE/usr/share/icons/hicolor/scalable/apps/ptt-dictation.svg"
+cp -r "$DIR/ba_ge" "$APPDIR/ba_ge"
+find "$APPDIR/ba_ge" -depth -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+cp "$DIR/packaging/ba-ge.svg" \
+   "$STAGE/usr/share/icons/hicolor/scalable/apps/ba-ge.svg"
 
-cat > "$STAGE/usr/bin/ptt-dictation" <<EOF
+cat > "$STAGE/usr/bin/ba-ge" <<EOF
 #!/usr/bin/env bash
 export PYTHONUTF8=1
 export PYTHONPATH="$PREFIX:$PREFIX/site-packages\${PYTHONPATH:+:\$PYTHONPATH}"
-exec "$PREFIX/runtime/bin/python$PYVER" -m ptt_dictation "\$@"
+exec "$PREFIX/runtime/bin/python$PYVER" -m ba_ge "\$@"
 EOF
-chmod +x "$STAGE/usr/bin/ptt-dictation"
+chmod +x "$STAGE/usr/bin/ba-ge"
 
-cat > "$STAGE/usr/share/applications/ptt-dictation.desktop" <<EOF
+cat > "$STAGE/usr/share/applications/ba-ge.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=PTT Dictation
+Name=Ba-Ge
 GenericName=Voice Dictation
 Comment=Hold a key to dictate with ElevenLabs Scribe
-Exec=/usr/bin/ptt-dictation
-Icon=/usr/share/icons/hicolor/scalable/apps/ptt-dictation.svg
+Exec=/usr/bin/ba-ge
+Icon=/usr/share/icons/hicolor/scalable/apps/ba-ge.svg
 Terminal=false
 Categories=Utility;
 Keywords=dictation;voice;speech;transcribe;microphone;scribe;
@@ -88,7 +88,7 @@ Actions=Settings;
 
 [Desktop Action Settings]
 Name=Settings
-Exec=/usr/bin/ptt-dictation --settings
+Exec=/usr/bin/ba-ge --settings
 EOF
 
 INSTALLED_KB="$(du -sk "$STAGE$PREFIX" "$STAGE/usr" | awk '{s+=$1} END {print s}')"
@@ -96,7 +96,7 @@ cat > "$STAGE/DEBIAN/control" <<EOF
 Package: $PKG
 Version: $VERSION
 Architecture: $ARCH
-Maintainer: PTT Dictation <ptt-dictation@localhost>
+Maintainer: Ba-Ge <ba-ge@localhost>
 Installed-Size: $INSTALLED_KB
 Depends: xdotool, xclip, x11-utils, alsa-utils, ffmpeg, libxcb-cursor0
 Recommends: libnotify-bin, ydotool

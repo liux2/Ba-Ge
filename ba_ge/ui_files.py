@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from .filejob import AUDIO_EXTENSIONS, FileJobError, default_txt_path, transcribe_file
 from .notify import notify
 
-log = logging.getLogger("ptt.ui.files")
+log = logging.getLogger("bage.ui.files")
 
 _open_windows: list = []  # keep references so windows aren't garbage-collected
 
@@ -115,7 +115,7 @@ class TranscribeWindow(QWidget):
         row.addStretch(1)
         row.addWidget(close)
         self._layout.addLayout(row)
-        notify("PTT Dictation", f"Transcription failed: {message}", urgency="critical")
+        notify("Ba-Ge", f"Transcription failed: {message}", urgency="critical")
 
     def _build_result(self, text: str, payload) -> None:
         self.text = text
@@ -149,7 +149,7 @@ class TranscribeWindow(QWidget):
 
     def _copy(self) -> None:
         QApplication.clipboard().setText(self.text)
-        notify("PTT Dictation", "Transcript copied to clipboard.", urgency="low")
+        notify("Ba-Ge", "Transcript copied to clipboard.", urgency="low")
 
     def _save(self) -> None:
         target, _ = QFileDialog.getSaveFileName(
@@ -157,6 +157,6 @@ class TranscribeWindow(QWidget):
         if target:
             try:
                 Path(target).write_text(self.text, encoding="utf-8")
-                notify("PTT Dictation", f"Saved {Path(target).name}", urgency="low")
+                notify("Ba-Ge", f"Saved {Path(target).name}", urgency="low")
             except OSError as exc:
-                notify("PTT Dictation", f"Save failed: {exc}", urgency="critical")
+                notify("Ba-Ge", f"Save failed: {exc}", urgency="critical")

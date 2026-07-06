@@ -4,8 +4,8 @@ import unittest
 import urllib.error
 from unittest import mock
 
-from ptt_dictation.config import Config
-from ptt_dictation.transcribe import TranscriptionError, transcribe, transcribe_verbose
+from ba_ge.config import Config
+from ba_ge.transcribe import TranscriptionError, transcribe, transcribe_verbose
 
 
 def _cfg():

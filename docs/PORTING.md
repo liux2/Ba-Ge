@@ -197,7 +197,7 @@ survives >60s idle.
   in Action Center without an AppUserModelID. Use **Windows-Toasts**
   (`register_hkey_aumid`) with a stable reverse-DNS id; ship a real `.ico`.
 - **First-open WASAPI latency clips short taps** — first `InputStream.start()` drops
-  leading ms ⇒ short PTT taps lose their first word / hit `is_too_short()`. Keep a
+  leading ms ⇒ short push-to-talk taps lose their first word / hit `is_too_short()`. Keep a
   **persistent stream** open (warm up once) rather than per-tap.
 - **PortAudio + ffmpeg must be bundled + resolved via `sys._MEIPASS`** — sounddevice
   may look for PortAudio at the dev path; ffmpeg isn't auto-collected. Bundle both;
@@ -232,7 +232,7 @@ survives >60s idle.
 
 ## Cross-cutting (all platforms)
 - **paths** — replace hard-coded `~/.config`/`~/.cache` with `platformdirs`
-  (`PlatformDirs('ptt-dictation', author)`); Linux still resolves to XDG (no
+  (`PlatformDirs('ba-ge', author)`); Linux still resolves to XDG (no
   regression). Print the resolved config path in "no API key" messages.
 - **clipboard** — pyperclip: built-in on Win, pbcopy on mac; Linux keeps xclip
   (Wayland needs `wl-clipboard` or it raises `PyperclipException`). Wrap + fallback.
@@ -294,4 +294,4 @@ survives >60s idle.
 ### Linux (regression gate — run in the dev env after each refactor step)
 - Full pytest suite green (proves Linux backends unchanged behind interfaces).
 - Manual hotkey → record → transcribe → type (xdotool/paste) identical to pre-port.
-- `grep -rn sys.platform ptt_dictation/` → appears ONLY in the backend factory.
+- `grep -rn sys.platform ba_ge/` → appears ONLY in the backend factory.

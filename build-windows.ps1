@@ -13,7 +13,7 @@ Set-Location $PSScriptRoot
 python -m pip install -U pyinstaller pynput sounddevice pyperclip pystray Pillow `
     platformdirs imageio-ffmpeg windows-toasts pywin32
 
-pyinstaller --noconfirm --clean --windowed --onedir --name "PTTDictation" `
+pyinstaller --noconfirm --clean --windowed --onedir --name "Ba-Ge" `
     --hidden-import "pystray._win32" `
     --collect-all "pystray" `
     --collect-all "windows_toasts" `
@@ -21,7 +21,7 @@ pyinstaller --noconfirm --clean --windowed --onedir --name "PTTDictation" `
     packaging\entry.py
 
 Write-Host ""
-Write-Host "Built dist\PTTDictation\ (UNVERIFIED). Per docs/PORTING.md (Windows):"
+Write-Host "Built dist\Ba-Ge\ (UNVERIFIED). Per docs/PORTING.md (Windows):"
 Write-Host "  * First run: a startup guard must set sys.stdout/stderr if None (windowed)."
 Write-Host "  * Mic 'Let desktop apps access your microphone' OFF => silent capture."
 Write-Host "  * Toasts need a registered AppUserModelID (windows-toasts register_hkey_aumid)."

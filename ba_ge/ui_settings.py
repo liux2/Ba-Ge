@@ -15,7 +15,7 @@ from .config import (
     Config, load_config, parse_keyterms, save_config, validate_keyterms,
 )
 
-log = logging.getLogger("ptt.ui.settings")
+log = logging.getLogger("bage.ui.settings")
 
 _MODELS = ["scribe_v2", "scribe_v1"]
 _HOTKEYS = ["f9", "f8", "f10", "f7", "pause", "scroll_lock", "ctrl_r"]
@@ -24,7 +24,7 @@ _BACKENDS = ["auto", "paste", "xdotool", "ydotool"]
 _current: dict = {"win": None}
 
 
-def open_settings(root=None, exec_cmd: str = "ptt-dictation", on_saved=None) -> None:
+def open_settings(root=None, exec_cmd: str = "ba-ge", on_saved=None) -> None:
     """Show (or raise) the settings window. Call on the Qt main thread."""
     win = _current.get("win")
     if win is not None:
@@ -40,7 +40,7 @@ def open_settings(root=None, exec_cmd: str = "ptt-dictation", on_saved=None) -> 
     win.show()
 
 
-def run_settings(exec_cmd: str = "ptt-dictation") -> None:
+def run_settings(exec_cmd: str = "ba-ge") -> None:
     """Standalone settings window with its own event loop (for `--settings`)."""
     from . import theme
     app = QApplication.instance() or QApplication([])
@@ -56,7 +56,7 @@ class SettingsWindow(QWidget):
         self.exec_cmd = exec_cmd
         self.on_saved = on_saved
         self.cfg = load_config()
-        self.setWindowTitle("PTT Dictation — Settings")
+        self.setWindowTitle("Ba-Ge — Settings")
 
         grid = QGridLayout(self)
         grid.setContentsMargins(22, 20, 22, 18)

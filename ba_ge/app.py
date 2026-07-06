@@ -24,7 +24,7 @@ from .notify import notify
 from .state import State
 from .transcribe import TranscriptionError, transcribe
 
-log = logging.getLogger("ptt.app")
+log = logging.getLogger("bage.app")
 
 _ERROR_RESET_DELAY = 2.0  # seconds before the ERROR indicator reverts to IDLE
 _SILENCE_PEAK = 64        # peak below this (of 32767) means the clip is silent
@@ -91,8 +91,8 @@ class DictationApp:
         if not started:
             self._indicate(State.ERROR)
             self.notifier(
-                "PTT Dictation",
-                "No ElevenLabs API key configured. Edit ~/.config/ptt-dictation/config.toml",
+                "Ba-Ge",
+                "No ElevenLabs API key configured. Edit ~/.config/ba-ge/config.toml",
                 urgency="critical",
             )
             self._schedule_idle_reset()
@@ -129,7 +129,7 @@ class DictationApp:
                 # Skip the (billed) API call and tell the user what's wrong.
                 self._set_state(State.IDLE)
                 self.notifier(
-                    "PTT Dictation — silent recording",
+                    "Ba-Ge — silent recording",
                     "No audio captured. Is the microphone muted or the wrong "
                     "device selected? (Settings → Microphone)",
                     urgency="critical")
@@ -151,7 +151,7 @@ class DictationApp:
         with self._lock:
             self._state = State.IDLE
         self._indicate(State.ERROR)
-        self.notifier("PTT Dictation — error", message, urgency="critical")
+        self.notifier("Ba-Ge — error", message, urgency="critical")
         self._schedule_idle_reset()
 
     def _schedule_idle_reset(self, delay: float = _ERROR_RESET_DELAY) -> None:
@@ -178,22 +178,22 @@ class DictationApp:
         missing = platform.missing_permissions()  # macOS TCC; [] elsewhere
         if missing:
             self.notifier(
-                "PTT Dictation — permission needed",
+                "Ba-Ge — permission needed",
                 f"Grant {', '.join(missing)} and Input Monitoring in System Settings "
                 "› Privacy & Security, then relaunch.", urgency="critical")
 
         if self.config.model_id in DEPRECATED_MODELS:
             log.warning('model_id %r is deprecated; set model_id = "scribe_v2" in %s',
                         self.config.model_id, CONFIG_PATH)
-            self.notifier("PTT Dictation",
+            self.notifier("Ba-Ge",
                           f"Model '{self.config.model_id}' is deprecated — update to scribe_v2.",
                           urgency="normal")
 
         if self.config.api_key_valid:
-            self.notifier("PTT Dictation",
+            self.notifier("Ba-Ge",
                           f"Ready — hold {self.config.hotkey.upper()} to dictate.")
         else:
-            self.notifier("PTT Dictation",
+            self.notifier("Ba-Ge",
                           f"Running, but no API key set. Edit {ensure_config_file()}",
                           urgency="normal")
 
@@ -219,7 +219,7 @@ class DictationApp:
     def reload_config(self) -> None:
         """Re-read config and rebuild config-derived components (live apply)."""
         if self.state is not State.IDLE:
-            self.notifier("PTT Dictation", "Settings saved — will apply when idle.")
+            self.notifier("Ba-Ge", "Settings saved — will apply when idle.")
             return
         self.config = load_config()
         self.recorder = platform.make_recorder(self.config)
@@ -231,7 +231,7 @@ class DictationApp:
             except Exception:
                 pass
             self._start_hotkey()
-        self.notifier("PTT Dictation",
+        self.notifier("Ba-Ge",
                       f"Settings applied — hold {self.config.hotkey.upper()} to dictate.")
 
     def _request_quit(self) -> None:
@@ -256,7 +256,7 @@ def _transcribe_file_cli(rest) -> None:
     from .filejob import FileJobError, default_txt_path, transcribe_file
 
     if not rest:
-        sys.stderr.write("usage: ptt-dictation --transcribe <audio-file>\n")
+        sys.stderr.write("usage: ba-ge --transcribe <audio-file>\n")
         sys.exit(2)
     path = rest[0]
     config = load_config()
@@ -320,8 +320,8 @@ def main() -> None:
         run_settings()
         return
 
-    if not singleton.acquire("ptt-dictation"):
-        notify("PTT Dictation", "Already running — hold F9 to dictate.")
+    if not singleton.acquire("ba-ge"):
+        notify("Ba-Ge", "Already running — hold F9 to dictate.")
         return
 
     ensure_config_file()

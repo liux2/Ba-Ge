@@ -1,13 +1,27 @@
-# PTT Dictation
+<div align="center">
 
-Push-to-talk voice dictation for Linux, powered by **[ElevenLabs Scribe](https://elevenlabs.io/speech-to-text)**.
-Hold a key, speak, release — your words are transcribed and pasted at the cursor
-in whatever app has focus. It also transcribes audio files with speaker labels and
-timestamps.
+# 🐦 Ba-Ge · 八哥
+
+**Push-to-talk voice dictation, tuned for bilingual 中 ↔ EN speech — powered by [ElevenLabs Scribe](https://elevenlabs.io/speech-to-text).**
+
+Hold a key, speak, release → your words appear at the cursor. \
+Named after the *mynah bird* (八哥), a natural multilingual mimic.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux%20(X11)-333)
+![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
+![UI](https://img.shields.io/badge/UI-PySide6%20·%20Qt-41CD52?logo=qt&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-74%20passing-brightgreen)
+
+<img src="docs/screenshot.png" alt="Ba-Ge settings" width="620">
+
+</div>
 
 ```
 [hold F9]  speak…  [release]  →  ElevenLabs Scribe  →  text pasted at the cursor
 ```
+
+It also transcribes audio files with **speaker labels + timestamps** (diarization).
 
 > **Platforms:** Linux (X11) — fully tested. The code is cross-platform (Qt +
 > pynput), so macOS/Windows are in reach, but they're **unverified on hardware** —
@@ -58,8 +72,8 @@ If your speech is monolingual, a local/open model may suit you better. But for
 ## Install
 
 ```bash
-git clone <your-repo-url> ptt-dictation
-cd ptt-dictation
+git clone <your-repo-url> ba-ge
+cd ba-ge
 ./install.sh
 ```
 
@@ -69,7 +83,7 @@ standalone interpreter) + **PySide6 (Qt)** in `.venv` — it never installs into
 touches your **system** Python, and needs no `python3-tk` or PyGObject. `uv` is
 auto-installed if it's missing.
 
-Then open **Activities → PTT Dictation** (or run `ptt-dictation`; `~/.local/bin` is
+Then open **Activities → Ba-Ge** (or run `ba-ge`; `~/.local/bin` is
 on PATH for most shells). Right-click the tray icon → **Settings** to paste your
 API key.
 
@@ -84,7 +98,7 @@ self-contained `.deb` that bundles its own Python + Qt — no `python3-*` at all
 
 ```bash
 ./build-deb.sh
-sudo apt install ./dist/ptt-dictation_*.deb
+sudo apt install ./dist/ba-ge_*.deb
 ```
 
 It's ~55 MB (the price of bundling Python + Qt) and depends only on
@@ -100,7 +114,7 @@ grey (idle) → red (recording) → yellow (transcribing).
 
 ### Settings
 
-Right-click the tray icon → **Settings…**, or run `ptt-dictation --settings`. You
+Right-click the tray icon → **Settings…**, or run `ba-ge --settings`. You
 can set your **API key**, model, language, **custom vocabulary**, **hold-to-talk
 key**, **microphone**, tap threshold, typing method, and **autostart on login**.
 Saving applies live to a running app.
@@ -134,7 +148,7 @@ then the diarized transcript with **Copy** / **Save…** buttons:
 Or headless from the CLI (writes `<name>.txt` next to the source, prints its path):
 
 ```bash
-ptt-dictation --transcribe interview.m4a      # → interview.txt
+ba-ge --transcribe interview.m4a      # → interview.txt
 ```
 
 `ffmpeg` down-mixes the file to a small 16 kHz mono clip before upload, so even long
@@ -142,7 +156,7 @@ recordings transfer quickly.
 
 ## Configuration
 
-`~/.config/ptt-dictation/config.toml` (created on first run; see
+`~/.config/ba-ge/config.toml` (created on first run; see
 `config.example.toml`):
 
 | Setting | Default | Meaning |
@@ -200,7 +214,7 @@ GNOME tray. All threads marshal UI work onto the Qt main thread via a signal bri
 
 ```bash
 # run from source (uses the .venv install.sh created)
-.venv/bin/python -m ptt_dictation
+.venv/bin/python -m ba_ge
 
 # tests
 .venv/bin/python -m unittest discover -s tests -v

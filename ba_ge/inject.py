@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import time
 
-log = logging.getLogger("ptt.inject")
+log = logging.getLogger("bage.inject")
 
 # WM_CLASS substrings for terminals that paste with Ctrl+Shift+V (not Ctrl+V).
 _TERMINAL_HINTS = ("terminal", "konsole", "xterm", "alacritty", "kitty",

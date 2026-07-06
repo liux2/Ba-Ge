@@ -18,7 +18,7 @@ import wave
 
 from .audio import _WAV_HEADER_BYTES, _wav_seconds, is_too_short
 
-log = logging.getLogger("ptt.audio_sd")
+log = logging.getLogger("bage.audio_sd")
 
 
 class AudioError(Exception):

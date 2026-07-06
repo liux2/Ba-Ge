@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a single compiled binary with Nuitka: dist/ptt-dictation
+# Build a single compiled binary with Nuitka: dist/ba-ge
 # Produces a self-contained native executable (no Python needed on the target),
 # far smaller than an Electron app. The target still needs the system tools
 # `ydotool` and `arecord` (alsa-utils) installed — they talk to the kernel and
@@ -28,17 +28,17 @@ echo "==> Compiling (a few minutes the first time)…"
 mkdir -p dist
 build/venv/bin/python -m nuitka \
     --standalone --onefile \
-    --include-package=ptt_dictation \
+    --include-package=ba_ge \
     --enable-plugin=gi \
     --assume-yes-for-downloads \
-    --output-filename=ptt-dictation \
+    --output-filename=ba-ge \
     --output-dir=build/nuitka \
     --remove-output \
     packaging/entry.py
 
-cp build/nuitka/ptt-dictation dist/ptt-dictation
-chmod +x dist/ptt-dictation
+cp build/nuitka/ba-ge dist/ba-ge
+chmod +x dist/ba-ge
 echo
-echo "Built dist/ptt-dictation ($(du -h dist/ptt-dictation | cut -f1))"
+echo "Built dist/ba-ge ($(du -h dist/ba-ge | cut -f1))"
 echo "Re-run ./install.sh to point the app launcher at the compiled binary."
 echo "Reminder: target machines still need 'ydotool' and 'alsa-utils' installed."

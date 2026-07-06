@@ -14,9 +14,9 @@ import urllib.request
 
 from .config import sanitize_keyterms
 
-log = logging.getLogger("ptt.transcribe")
+log = logging.getLogger("bage.transcribe")
 
-_BOUNDARY = "----pttDictationBoundaryV1xK9sLpQ2"
+_BOUNDARY = "----BaGeBoundaryV1xK9sLpQ2"
 
 
 class TranscriptionError(Exception):

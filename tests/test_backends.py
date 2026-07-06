@@ -2,9 +2,9 @@
 
 import unittest
 
-from ptt_dictation.audio import _wav_seconds, peak_amplitude
-from ptt_dictation.audio_sd import _to_wav
-from ptt_dictation.config import Config
+from ba_ge.audio import _wav_seconds, peak_amplitude
+from ba_ge.audio_sd import _to_wav
+from ba_ge.config import Config
 
 try:
     import pynput  # noqa: F401
@@ -66,7 +66,7 @@ class _FakeClip:
 @unittest.skipUnless(_HAVE_PYNPUT, "pynput not installed")
 class PynputInjectorTest(unittest.TestCase):
     def _make(self, backend, initial_clip=""):
-        from ptt_dictation.inject_pynput import PynputInjector
+        from ba_ge.inject_pynput import PynputInjector
         kb, clip = _FakeKb(), _FakeClip(initial_clip)
         inj = PynputInjector(Config(inject_backend=backend), controller=kb, clipboard=clip)
         inj._paste_restore_delay = 0

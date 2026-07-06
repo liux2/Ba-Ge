@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 
-log = logging.getLogger("ptt.hotkey")
+log = logging.getLogger("bage.hotkey")
 
 
 class HoldDebouncer:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-log = logging.getLogger("ptt.theme")
+log = logging.getLogger("bage.theme")
 
 
 def apply(app) -> None:

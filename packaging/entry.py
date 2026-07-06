@@ -12,7 +12,7 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
-from ptt_dictation.app import main  # noqa: E402
+from ba_ge.app import main  # noqa: E402
 
 if __name__ == "__main__":
     main()

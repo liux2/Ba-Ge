@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from ptt_dictation.audio import (
+from ba_ge.audio import (
     _patch_wav_sizes,
     _wav_seconds,
     arecord_env,
@@ -9,7 +9,7 @@ from ptt_dictation.audio import (
     is_too_short,
     peak_amplitude,
 )
-from ptt_dictation.config import Config
+from ba_ge.config import Config
 
 
 def _wav(data_bytes: int) -> bytes:

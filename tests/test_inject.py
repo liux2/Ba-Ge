@@ -1,8 +1,8 @@
 import subprocess
 import unittest
 
-from ptt_dictation.config import Config
-from ptt_dictation.inject import InjectionError, Injector, resolve_backend
+from ba_ge.config import Config
+from ba_ge.inject import InjectionError, Injector, resolve_backend
 
 
 class Result:

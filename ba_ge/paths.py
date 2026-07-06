@@ -1,9 +1,9 @@
 """Cross-platform config / cache / lock locations.
 
 On Linux these resolve to the same XDG paths the app has always used
-(~/.config/ptt-dictation, ~/.cache/ptt-dictation), so existing installs keep
+(~/.config/ba-ge, ~/.cache/ba-ge), so existing installs keep
 working with no migration. On macOS they resolve to ~/Library/..., on Windows to
-%LOCALAPPDATA%\\ptt-dictation.
+%LOCALAPPDATA%\\ba-ge.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from platformdirs import PlatformDirs
 
-_dirs = PlatformDirs(appname="ptt-dictation", appauthor=False)
+_dirs = PlatformDirs(appname="ba-ge", appauthor=False)
 
 
 def config_dir() -> Path:
@@ -32,4 +32,4 @@ def transcript_log() -> Path:
 
 
 def lock_path() -> Path:
-    return cache_dir() / "ptt-dictation.lock"
+    return cache_dir() / "ba-ge.lock"

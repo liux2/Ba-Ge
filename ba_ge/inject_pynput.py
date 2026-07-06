@@ -17,7 +17,7 @@ import time
 
 from .inject import InjectionError
 
-log = logging.getLogger("ptt.inject_pynput")
+log = logging.getLogger("bage.inject_pynput")
 
 
 class PynputInjector:

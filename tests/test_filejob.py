@@ -1,6 +1,6 @@
 import unittest
 
-from ptt_dictation.filejob import (
+from ba_ge.filejob import (
     _fmt_ts,
     build_ffmpeg_cmd,
     default_txt_path,

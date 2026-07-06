@@ -11,7 +11,7 @@ import logging
 import subprocess
 import sys
 
-log = logging.getLogger("ptt.platform")
+log = logging.getLogger("bage.platform")
 
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"

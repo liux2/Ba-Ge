@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 
-log = logging.getLogger("ptt.audio")
+log = logging.getLogger("bage.audio")
 
 # Canonical PCM WAV header is 44 bytes; anything <= that contains no audio frames.
 _WAV_HEADER_BYTES = 44
@@ -129,7 +129,7 @@ class Recorder:
         with self._lock:
             if self._proc is not None:
                 return
-            fd, path = tempfile.mkstemp(prefix="ptt-", suffix=".wav")
+            fd, path = tempfile.mkstemp(prefix="bage-", suffix=".wav")
             os.close(fd)
             self._path = path
             self._start = time.monotonic()

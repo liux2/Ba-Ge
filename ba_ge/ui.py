@@ -20,7 +20,7 @@ import sys
 
 from .state import State
 
-log = logging.getLogger("ptt.ui")
+log = logging.getLogger("bage.ui")
 
 _COLORS = {
     State.IDLE: "#cdcdcd",
@@ -29,10 +29,10 @@ _COLORS = {
     State.ERROR: "#e67e22",
 }
 _TIP = {
-    State.IDLE: "PTT Dictation — idle (hold {hk})",
+    State.IDLE: "Ba-Ge — idle (hold {hk})",
     State.RECORDING: "Recording…",
     State.BUSY: "Transcribing…",
-    State.ERROR: "PTT Dictation — error",
+    State.ERROR: "Ba-Ge — error",
 }
 
 

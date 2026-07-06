@@ -1,4 +1,4 @@
-"""Configuration: defaults + ~/.config/ptt-dictation/config.toml + env override."""
+"""Configuration: defaults + ~/.config/ba-ge/config.toml + env override."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import paths
 
-log = logging.getLogger("ptt.config")
+log = logging.getLogger("bage.config")
 
 # ElevenLabs keyterm-prompting limits (batch): <=1000 terms, <=50 chars, <=5 words.
 KEYTERMS_MAX = 1000
@@ -81,7 +81,7 @@ CONFIG_DIR = paths.config_dir()
 CONFIG_PATH = paths.config_path()
 
 EXAMPLE_CONFIG = """\
-# PTT Dictation configuration
+# Ba-Ge configuration
 # Get an API key at https://elevenlabs.io  (Profile -> API Keys)
 
 [elevenlabs]
@@ -243,7 +243,7 @@ def dump_toml(cfg: Config) -> str:
         keyterms = ('# keyterms = ["Kubernetes", "OAuth", "ElevenLabs"]   '
                     "# bias recognition (~20% cost when used)")
     return (
-        "# PTT Dictation configuration\n"
+        "# Ba-Ge configuration\n"
         "# Get an API key at https://elevenlabs.io  (Profile -> API Keys)\n\n"
         "[elevenlabs]\n"
         f"api_key = {_toml_str(cfg.api_key)}\n"

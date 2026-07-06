@@ -16,13 +16,13 @@ import sys
 
 from . import paths
 
-log = logging.getLogger("ptt.singleton")
+log = logging.getLogger("bage.singleton")
 
 # Keep sockets / file handles / mutex handles alive for the whole process.
 _held: list = []
 
 
-def acquire(name: str = "ptt-dictation") -> bool:
+def acquire(name: str = "ba-ge") -> bool:
     if sys.platform == "win32":
         return _acquire_windows_mutex(name)
     if sys.platform == "linux":

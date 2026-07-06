@@ -1,4 +1,4 @@
-# PTT Dictation — project guide (auto-loaded)
+# Ba-Ge — project guide (auto-loaded)
 
 Push-to-talk voice dictation + audio-file transcription using **ElevenLabs
 Scribe**. Hold a hotkey → record → transcribe → type at the cursor. Also
@@ -33,7 +33,7 @@ with a custom-vocabulary (`keyterms`) dictionary.
     Windows AUMID toast registration.
 
 ## How to run / test (Linux dev env)
-- Run: `.venv/bin/python -m ptt_dictation`  (or the `.pyz` / app icon)
+- Run: `.venv/bin/python -m ba_ge`  (or the `.pyz` / app icon)
 - Tests: `.venv/bin/python -m unittest discover -s tests -t .`  (must stay green)
 - The `.venv` runs a **uv-managed standalone Python** (`uv venv --python 3.12`) +
   **PySide6** — NOT the system Python, and no gi/Tk. Qt's wheels are self-contained,
@@ -81,6 +81,6 @@ essentials:
 ## Conventions
 - Don't write summary/plan `.md` files unless asked (this file and `docs/PORTING.md`
   were explicitly requested).
-- After changing code that the packaged app runs, rebuild `dist/ptt-dictation.pyz`.
+- After changing code that the packaged app runs, rebuild `dist/ba-ge.pyz`.
 - `docs/PORTING.md` carries a per-platform on-hardware **testing checklist** — hand
   it to whoever tests on Mac/Windows.

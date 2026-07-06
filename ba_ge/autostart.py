@@ -1,6 +1,6 @@
 """Start-on-login — one backend per OS, same ``is_enabled`` / ``set_enabled``.
 
-* Linux: XDG ``~/.config/autostart/ptt-dictation.desktop``.
+* Linux: XDG ``~/.config/autostart/ba-ge.desktop``.
 * macOS: LaunchAgent plist in ``~/Library/LaunchAgents``.
 * Windows: HKCU ``...\\Run`` registry value.
 
@@ -16,15 +16,15 @@ from pathlib import Path
 # ---- Linux (XDG) ----
 
 AUTOSTART_DIR = Path.home() / ".config" / "autostart"
-AUTOSTART_PATH = AUTOSTART_DIR / "ptt-dictation.desktop"
+AUTOSTART_PATH = AUTOSTART_DIR / "ba-ge.desktop"
 
 _DESKTOP = """\
 [Desktop Entry]
 Type=Application
-Name=PTT Dictation
+Name=Ba-Ge
 Comment=Hold-to-talk voice dictation (ElevenLabs Scribe)
 Exec={exec}
-Icon=ptt-dictation
+Icon=ba-ge
 Terminal=false
 X-GNOME-Autostart-enabled=true
 """
@@ -40,7 +40,7 @@ def is_enabled(path: Path | None = None) -> bool:
     return False
 
 
-def set_enabled(enabled: bool, exec_cmd: str = "ptt-dictation",
+def set_enabled(enabled: bool, exec_cmd: str = "ba-ge",
                 path: Path | None = None) -> None:
     if sys.platform == "linux" or path is not None:
         _linux_set_enabled(enabled, exec_cmd, path)
@@ -74,7 +74,7 @@ def _linux_set_enabled(enabled: bool, exec_cmd: str, path: Path | None) -> None:
 
 # ---- macOS (LaunchAgent) ----
 
-_MAC_LABEL = "com.ptt-dictation.agent"
+_MAC_LABEL = "com.ba-ge.agent"
 _MAC_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{_MAC_LABEL}.plist"
 _PLIST = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -106,7 +106,7 @@ def _macos_is_enabled() -> bool:
 # ---- Windows (HKCU Run) ----
 
 _WIN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-_WIN_NAME = "PTTDictation"
+_WIN_NAME = "Ba-Ge"
 
 
 def _windows_set_enabled(enabled: bool, exec_cmd: str) -> None:

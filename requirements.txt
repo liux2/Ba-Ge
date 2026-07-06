@@ -1,4 +1,4 @@
-# PTT Dictation — Python deps. The UI is PySide6 (Qt): its wheels are fully
+# Ba-Ge — Python deps. The UI is PySide6 (Qt): its wheels are fully
 # self-contained (no system Tk/GTK), and QSystemTrayIcon speaks StatusNotifier
 # natively, so the tray works on GNOME without PyGObject. One codebase serves
 # Linux, macOS, and Windows. Install into a uv-managed standalone Python:

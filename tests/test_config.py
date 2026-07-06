@@ -3,7 +3,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from ptt_dictation.config import (
+from ba_ge.config import (
     Config,
     PLACEHOLDER_API_KEY,
     dump_toml,
