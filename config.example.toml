@@ -1,0 +1,25 @@
+# PTT Dictation configuration
+# Get an API key at https://elevenlabs.io  (Profile -> API Keys)
+
+[elevenlabs]
+# REQUIRED: paste your ElevenLabs API key here (replaces the placeholder).
+# You can also set the ELEVENLABS_API_KEY environment variable instead,
+# which takes precedence over this file.
+api_key = "YOUR_ELEVENLABS_API_KEY_HERE"
+model_id = "scribe_v2"
+# language_code = "eng"   # omit to auto-detect
+
+[hotkey]
+# Hold-to-talk key. Examples: "f9", "pause", "ctrl_r", "scroll_lock"
+key = "f9"
+
+[audio]
+device = "default"        # ALSA device; "default" follows the PipeWire default mic
+sample_rate = 16000
+channels = 1
+min_duration = 0.3        # ignore accidental taps shorter than this (seconds)
+
+[inject]
+backend = "auto"          # typing method: auto (xdotool on X11, else ydotool) | xdotool | ydotool
+key_delay_ms = 20         # per-keystroke delay; raise if chars/spaces drop (mainly ydotool)
+# ydotool_socket = "/run/user/1000/.ydotool_socket"   # override ydotoold socket (auto if unset)

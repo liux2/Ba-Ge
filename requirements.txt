@@ -1,0 +1,19 @@
+# PTT Dictation — Python deps. The UI is PySide6 (Qt): its wheels are fully
+# self-contained (no system Tk/GTK), and QSystemTrayIcon speaks StatusNotifier
+# natively, so the tray works on GNOME without PyGObject. One codebase serves
+# Linux, macOS, and Windows. Install into a uv-managed standalone Python:
+#   uv venv --python 3.12 .venv && uv pip install -r requirements.txt
+#
+# System tools still used on Linux (not Python packages):
+#   alsa-utils    microphone capture (arecord)
+#   xdotool + xclip   type/paste at cursor (or ydotool)
+#   ffmpeg        file transcription
+#   libnotify-bin notifications (notify-send)
+# Qt's xcb platform plugin needs libxcb-cursor0 on some minimal systems.
+
+PySide6-Essentials>=6.7    # Qt UI toolkit + tray (all OSes; self-contained wheel)
+pynput>=1.7                # global hotkey (all OSes) + typing on macOS/Windows
+platformdirs>=4            # cross-platform config/cache locations
+pyperclip>=1.8             # clipboard (paste injection on macOS/Windows)
+sounddevice>=0.4           # audio capture on macOS/Windows (Linux uses arecord)
+# imageio-ffmpeg           # optional: bundled ffmpeg for file transcription on macOS/Windows
