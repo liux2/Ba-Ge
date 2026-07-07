@@ -6,7 +6,7 @@
 #
 # System tools still used on Linux (not Python packages):
 #   alsa-utils    microphone capture (arecord)
-#   xdotool + xclip   type/paste at cursor (or ydotool)
+#   ydotool       type at cursor via /dev/uinput (X11 + Wayland; needs ydotoold)
 #   ffmpeg        file transcription
 #   libnotify-bin notifications (notify-send)
 # Qt's xcb platform plugin needs libxcb-cursor0 on some minimal systems.

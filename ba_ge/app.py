@@ -172,6 +172,9 @@ class DictationApp:
         self.indicator = make_indicator(
             self._request_quit, self._open_settings, self._open_transcribe,
             hotkey_name=self.config.hotkey.upper())
+        if platform.IS_LINUX:
+            from .inject import ensure_ydotoold  # reliable typing needs ydotoold running
+            ensure_ydotoold()
         self._start_hotkey()
         self._set_state(State.IDLE)
 

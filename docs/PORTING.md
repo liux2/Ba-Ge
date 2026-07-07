@@ -38,12 +38,12 @@ Interfaces: `Recorder`, `Injector` (`type_text`, `backend`), `Indicator`
 |---|---|---|---|
 | Hotkey | pynput | pynput (Input Monitoring perm) | pynput (UIPI caveats) |
 | Audio | `arecord` | `sounddevice`/PortAudio (Mic TCC) | `sounddevice`/WASAPI (privacy toggle) |
-| Type at cursor | xdotool/paste | **clipboard-paste default** (Cmd+V) | **clipboard-paste default** (Ctrl+V) |
-| Tray | GTK AppIndicator | **rumps** (not pystray) | pystray (win32) |
-| Windows (UI) | GTK (for now) | tkinter | tkinter |
+| Type at cursor | **ydotool** (uinput, X11+Wayland) | **clipboard-paste default** (Cmd+V) | **clipboard-paste default** (Ctrl+V) |
+| Tray | Qt QSystemTrayIcon (SNI) | **rumps** (not pystray) | pystray (win32) |
+| Windows (UI) | Qt (PySide6) | tkinter | tkinter |
 | Notifications | notify-send | rumps/UserNotifications | Windows-Toasts + AUMID |
 | Config/cache dirs | `~/.config` | `platformdirs` → `~/Library/...` | `platformdirs` → `%LOCALAPPDATA%` |
-| Clipboard | xclip (keep) | pyperclip (pbcopy) | pyperclip (built-in) |
+| Clipboard | n/a on Linux (ydotool types, no clipboard) | pyperclip (pbcopy) | pyperclip (built-in) |
 | Single-instance | abstract unix socket | flock lockfile | named mutex (`CreateMutexW`) |
 | Autostart | XDG .desktop | LaunchAgent plist | HKCU `Run` key |
 | ffmpeg | system PATH | bundle (imageio-ffmpeg) | bundle (imageio-ffmpeg) |
@@ -234,7 +234,7 @@ survives >60s idle.
 - **paths** — replace hard-coded `~/.config`/`~/.cache` with `platformdirs`
   (`PlatformDirs('ba-ge', author)`); Linux still resolves to XDG (no
   regression). Print the resolved config path in "no API key" messages.
-- **clipboard** — pyperclip: built-in on Win, pbcopy on mac; Linux keeps xclip
+- **clipboard** — pyperclip: built-in on Win, pbcopy on mac; Linux uses ydotool (no clipboard for injection)
   (Wayland needs `wl-clipboard` or it raises `PyperclipException`). Wrap + fallback.
 - **notifications** — `notify-send` is Linux-only (FileNotFound no-ops silently
   elsewhere) → Notifier interface; also mirror critical messages in tray/window so
@@ -293,5 +293,5 @@ survives >60s idle.
 
 ### Linux (regression gate — run in the dev env after each refactor step)
 - Full pytest suite green (proves Linux backends unchanged behind interfaces).
-- Manual hotkey → record → transcribe → type (xdotool/paste) identical to pre-port.
+- Manual hotkey → record → transcribe → type (ydotool) identical to pre-port.
 - `grep -rn sys.platform ba_ge/` → appears ONLY in the backend factory.

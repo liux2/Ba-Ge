@@ -105,8 +105,8 @@ channels = 1
 min_duration = 0.3        # ignore accidental taps shorter than this (seconds)
 
 [inject]
-backend = "auto"          # typing method: auto (xdotool on X11, else ydotool) | xdotool | ydotool
-key_delay_ms = 20         # per-keystroke delay; raise if chars/spaces drop (mainly ydotool)
+backend = "ydotool"       # keystroke injection via uinput — X11 + Wayland, clipboard-free
+key_delay_ms = 20         # per-keystroke delay; raise if characters drop
 # ydotool_socket = "/run/user/1000/.ydotool_socket"   # override ydotoold socket (auto if unset)
 """
 
@@ -121,8 +121,8 @@ class Config:
     sample_rate: int = 16000
     channels: int = 1
     audio_device: str = "default"
-    key_delay_ms: int = 20  # inter-keystroke delay; too low drops chars/spaces (ydotool)
-    inject_backend: str = "auto"  # auto | xdotool | ydotool
+    key_delay_ms: int = 20  # inter-keystroke delay; too low can drop characters
+    inject_backend: str = "ydotool"  # ydotool (uinput; X11 + Wayland, clipboard-free)
     ui_scale: float = 0.0  # UI zoom; 0 = auto-detect from display DPI
     ydotool_socket: str = ""  # override ydotoold socket path; "" = auto-detect
     keyterms: list = field(default_factory=list)  # bias recognition toward these terms
@@ -258,7 +258,7 @@ def dump_toml(cfg: Config) -> str:
         f"channels = {cfg.channels}\n"
         f"min_duration = {cfg.min_duration}\n\n"
         "[inject]\n"
-        f'backend = {_toml_str(cfg.inject_backend)}   # auto | xdotool | ydotool\n'
+        f'backend = {_toml_str(cfg.inject_backend)}   # ydotool (uinput; X11 + Wayland)\n'
         f"key_delay_ms = {cfg.key_delay_ms}\n"
         f"{sock}\n\n"
         "[ui]\n"

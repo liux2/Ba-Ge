@@ -10,8 +10,9 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 PYVER=3.12
 
-# --- 1. System tools (no python3-* at all) ---
-PKGS=(xdotool xclip x11-utils ffmpeg alsa-utils libnotify-bin libxcb-cursor0)
+# --- 1. System tools (no python3-* at all). ydotool injects at the uinput level,
+#        so typing works on X11 AND Wayland and never touches the clipboard.
+PKGS=(ydotool ffmpeg alsa-utils libnotify-bin libxcb-cursor0)
 MISSING=()
 for p in "${PKGS[@]}"; do
     dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")
@@ -24,6 +25,32 @@ elif command -v apt-get >/dev/null; then
         || echo "!! apt failed — run: sudo apt-get install -y ${MISSING[*]}"
 else
     echo "!! Non-apt distro — install equivalents of: ${MISSING[*]}"
+fi
+
+# --- 1b. ydotoold: uinput access (needs root) + a user service for the daemon ---
+if command -v ydotoold >/dev/null 2>&1; then
+    echo "==> Setting up ydotoold (virtual keyboard) + /dev/uinput access"
+    sudo modprobe uinput 2>/dev/null || true
+    echo uinput | sudo tee /etc/modules-load.d/ba-ge-uinput.conf >/dev/null 2>&1 || true
+    echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' \
+        | sudo tee /etc/udev/rules.d/80-uinput-ba-ge.rules >/dev/null 2>&1 || true
+    sudo udevadm control --reload-rules 2>/dev/null && sudo udevadm trigger 2>/dev/null || true
+    sudo usermod -aG input "$USER" 2>/dev/null || true
+    mkdir -p "$HOME/.config/systemd/user"
+    cat > "$HOME/.config/systemd/user/ydotoold.service" <<EOF
+[Unit]
+Description=ydotoold — virtual input daemon (Ba-Ge)
+[Service]
+ExecStart=/usr/bin/ydotoold -p %t/.ydotool_socket -P 0660
+Restart=always
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now ydotoold 2>/dev/null || true
+    if ! id -nG "$USER" 2>/dev/null | grep -qw input; then
+        echo "    NOTE: you were added to the 'input' group — LOG OUT and back in once for typing to work."
+    fi
 fi
 
 # --- 2. uv (bootstrap into ~/.local/bin if missing) ---

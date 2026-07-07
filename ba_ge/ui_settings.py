@@ -19,7 +19,6 @@ log = logging.getLogger("bage.ui.settings")
 
 _MODELS = ["scribe_v2", "scribe_v1"]
 _HOTKEYS = ["f9", "f8", "f10", "f7", "pause", "scroll_lock", "ctrl_r"]
-_BACKENDS = ["auto", "paste", "xdotool", "ydotool"]
 
 _current: dict = {"win": None}
 
@@ -133,12 +132,6 @@ class SettingsWindow(QWidget):
         self.key_delay.setValue(self.cfg.key_delay_ms)
         add("Typing key delay (ms)", self.key_delay)
 
-        self.backend = QComboBox()
-        self.backend.addItems(_BACKENDS)
-        self.backend.setCurrentText(
-            self.cfg.inject_backend if self.cfg.inject_backend in _BACKENDS else "auto")
-        add("Typing method", self.backend)
-
         self.autostart = QCheckBox("Start automatically on login")
         self.autostart.setChecked(autostart.is_enabled())
         grid.addWidget(self.autostart, row, 1)
@@ -173,7 +166,7 @@ class SettingsWindow(QWidget):
         cfg.audio_device = self.mic.currentData() or "default"
         cfg.min_duration = round(float(self.min_dur.value()), 2)
         cfg.key_delay_ms = int(self.key_delay.value())
-        cfg.inject_backend = self.backend.currentText() or "auto"
+        cfg.inject_backend = self.cfg.inject_backend or "ydotool"
         cfg.ui_scale = self.cfg.ui_scale
         cfg.ydotool_socket = self.cfg.ydotool_socket
         return cfg
