@@ -107,7 +107,11 @@ class Injector:
 
     def _type_ydotool(self, text: str) -> None:
         cmd = ["ydotool", "type", "--key-delay", str(self.key_delay_ms), "--file", "-"]
-        res = self._run(cmd, text, env=_ydotool_env(self.socket))
+        # Bound the wait to ~2x the expected typing time (+ headroom) so a hung or
+        # unreachable ydotoold can never leave the app stuck in "transcribing" — it
+        # times out, raises, and the state machine recovers to IDLE.
+        timeout = max(8.0, 2 * len(text) * self.key_delay_ms / 1000 + 5)
+        res = self._run(cmd, text, env=_ydotool_env(self.socket), timeout=timeout)
         stderr = self._err(res)
         if self._rc(res) != 0:
             raise InjectionError(

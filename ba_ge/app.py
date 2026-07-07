@@ -28,6 +28,7 @@ log = logging.getLogger("bage.app")
 
 _ERROR_RESET_DELAY = 2.0  # seconds before the ERROR indicator reverts to IDLE
 _SILENCE_PEAK = 64        # peak below this (of 32767) means the clip is silent
+_BUSY_TIMEOUT = 90.0      # force-recover if processing hangs this long (never stay stuck)
 
 # TEMPORARY debug aid: append the raw transcript Scribe returns (before typing)
 # so the exact text — spaces and all — can be inspected. Removed after we diagnose
@@ -61,6 +62,7 @@ class DictationApp:
         self._lock = threading.RLock()
         self._hotkey = None
         self._error_timer = None
+        self._busy_watchdog = None
 
     @property
     def state(self) -> State:
@@ -111,11 +113,33 @@ class DictationApp:
                 return
             self._state = State.BUSY
         self._indicate(State.BUSY)
+        self._arm_busy_watchdog()
 
         if self.run_async:
             threading.Thread(target=self._process, daemon=True).start()
         else:
             self._process()
+
+    # ---- watchdog: never stay stuck in BUSY ----
+
+    def _arm_busy_watchdog(self) -> None:
+        with self._lock:
+            if self._busy_watchdog is not None:
+                self._busy_watchdog.cancel()
+            self._busy_watchdog = threading.Timer(_BUSY_TIMEOUT, self._busy_timed_out)
+            self._busy_watchdog.daemon = True
+            self._busy_watchdog.start()
+
+    def _disarm_busy_watchdog(self) -> None:
+        with self._lock:
+            if self._busy_watchdog is not None:
+                self._busy_watchdog.cancel()
+                self._busy_watchdog = None
+
+    def _busy_timed_out(self) -> None:
+        if self.state is State.BUSY:
+            log.error("processing exceeded %ss — force-resetting to idle", _BUSY_TIMEOUT)
+            self._fail("Processing timed out — reset. Try again.")
 
     # ---- worker ----
 
@@ -145,6 +169,8 @@ class DictationApp:
         except Exception as exc:  # pragma: no cover - defensive
             log.exception("unexpected error during processing")
             self._fail(f"Unexpected error: {exc}")
+        finally:
+            self._disarm_busy_watchdog()
 
     def _fail(self, message: str) -> None:
         log.error(message)
@@ -241,6 +267,7 @@ class DictationApp:
         self._shutdown()
 
     def _shutdown(self) -> None:
+        self._disarm_busy_watchdog()
         if self._hotkey is not None:
             try:
                 self._hotkey.stop()
