@@ -21,7 +21,7 @@ from .inject import InjectionError
 
 log = logging.getLogger("bage.clipboard")
 
-_RESTORE_MS = 400   # wait for the target to read before restoring the old clipboard
+_RESTORE_MS = 1200  # give slow / cross-process targets time to read before restoring
 _PASTE_TIMEOUT = 8  # worker-thread guard so a wedged main loop can't hang dictation
 
 
@@ -32,7 +32,7 @@ class ClipboardManager(QObject):
         super().__init__()
         self._clip = app.clipboard()
         self._history: deque = deque(maxlen=history_size)
-        self._suppress = 0  # ignore this many self-initiated dataChanged events
+        self._own: set = set()  # text values WE wrote — excluded from history BY VALUE
         self._clip.dataChanged.connect(self._on_change)
         # Connect to a bound method of THIS QObject so cross-thread emits are queued
         # onto the main (GUI) thread — a bare lambda would run on the emitting thread.
@@ -44,10 +44,10 @@ class ClipboardManager(QObject):
     # ---- history ----
 
     def _on_change(self) -> None:
-        if self._suppress > 0:
-            self._suppress -= 1
-            return
         text = self._clip.text()
+        if text in self._own:
+            self._own.discard(text)  # our own write — skip once; don't record it
+            return
         if text and (not self._history or self._history[0] != text):
             # de-dupe: move an existing entry to the front
             try:
@@ -79,7 +79,7 @@ class ClipboardManager(QObject):
 
         def prep():
             box["saved"] = self._clone(self._clip.mimeData())
-            self._suppress += 1            # our set — don't record it
+            self._own.add(text)            # our set — exclude from history by value
             self._clip.setText(text)
             done.set()
 
@@ -90,11 +90,17 @@ class ClipboardManager(QObject):
         send_key()  # worker thread → main loop stays free to serve the paste request
 
         self._marshal.emit(
-            lambda: QTimer.singleShot(_RESTORE_MS, lambda: self._restore(box.get("saved"))))
+            lambda: QTimer.singleShot(_RESTORE_MS, lambda: self._restore(box.get("saved"), text)))
 
-    def _restore(self, saved) -> None:
-        self._suppress += 1            # our restore — don't record it either
+    def _restore(self, saved, our_text) -> None:
+        # Only restore if the clipboard still holds OUR transcript. If the target or
+        # the user changed it meanwhile, leave it — don't clobber a fresh copy.
+        if self._clip.text() != our_text:
+            return
         if saved is not None:
+            st = saved.text()
+            if st:
+                self._own.add(st)          # don't record the restored value either
             self._clip.setMimeData(saved)
         else:
             self._clip.clear()

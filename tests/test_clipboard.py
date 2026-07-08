@@ -41,11 +41,14 @@ class ClipboardManagerTest(unittest.TestCase):
         self._record(m, "a", "b", "a")
         self.assertEqual(m.history(), ["a", "b"])
 
-    def test_suppress_excludes_own_paste(self):
+    def test_own_write_excluded_from_history(self):
         m = self._mgr()
-        m._suppress += 1                       # our own clipboard write (a dictation)
+        m._own.add("dictated transcript")      # our own clipboard write (a dictation)
         self._record(m, "dictated transcript")
         self.assertNotIn("dictated transcript", m.history())
+        # a later EXTERNAL copy of different text is still recorded
+        self._record(m, "real copy")
+        self.assertEqual(m.history()[0], "real copy")
 
     def test_history_is_capped(self):
         m = self._mgr(size=2)
