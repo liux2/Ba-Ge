@@ -6,13 +6,14 @@
 #
 # System tools still used on Linux (not Python packages):
 #   alsa-utils    microphone capture (arecord)
-#   ydotool       type at cursor via /dev/uinput (X11 + Wayland; needs ydotoold)
 #   ffmpeg        file transcription
 #   libnotify-bin notifications (notify-send)
-# Qt's xcb platform plugin needs libxcb-cursor0 on some minimal systems.
+# Paste injection needs no system tool: the keystroke is sent with pynput (XTEST,
+# X11) and the clipboard is handled by Qt — both bundled. libxcb-cursor0 is what
+# Qt's xcb platform plugin needs on some minimal systems.
 
 PySide6-Essentials>=6.7    # Qt UI toolkit + tray (all OSes; self-contained wheel)
-pynput>=1.7                # global hotkey (all OSes) + typing on macOS/Windows
+pynput>=1.7                # global hotkey (all OSes) + paste keystroke/typing (also pulls python-xlib on Linux)
 platformdirs>=4            # cross-platform config/cache locations
 pyperclip>=1.8             # clipboard (paste injection on macOS/Windows)
 sounddevice>=0.4           # audio capture on macOS/Windows (Linux uses arecord)

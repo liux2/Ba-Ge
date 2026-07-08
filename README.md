@@ -55,9 +55,12 @@ you better.)
 ## Features
 
 - **Hold-to-talk dictation** — hold F9 (configurable), speak, release; the
-  transcript is typed at the cursor.
-- **Clipboard-free typing** — injects keystrokes via **ydotool** (`/dev/uinput`),
-  so it works on **X11 *and* Wayland** and **never touches your clipboard**.
+  transcript is pasted at the cursor.
+- **Instant paste injection** — inserts the whole transcript in one shot (no slow
+  per-key typing), auto-using **Ctrl+Shift+V** in terminals.
+- **Clipboard preserved** — a built-in manager restores your previous clipboard
+  after each paste, so dictation never clobbers what you copied; it also keeps a
+  small **history stack** (tray → *Clipboard history*).
 - **File transcription** — mp3 / wav / m4a / flac / ogg → full transcript with
   **speaker labels + timestamps** (ElevenLabs diarization).
 - **Custom vocabulary** — bias recognition toward names, jargon, and product terms
@@ -70,8 +73,9 @@ you better.)
 
 - An **ElevenLabs API key** — create one at
   [elevenlabs.io](https://elevenlabs.io) (Profile → API Keys).
-- Linux — **X11 or Wayland**. A tray host is needed for the indicator icon
-  (on GNOME, the *AppIndicator/StatusNotifier* support extension).
+- Linux with **X11** (the paste keystroke uses XTEST; a Wayland session won't
+  receive it). A tray host is needed for the indicator icon (on GNOME, the
+  *AppIndicator/StatusNotifier* support extension).
 
 ## Install
 
@@ -91,11 +95,10 @@ Then open **Activities → Ba-Ge** (or run `ba-ge`; `~/.local/bin` is
 on PATH for most shells). Right-click the tray icon → **Settings** to paste your
 API key.
 
-**apt packages it installs:** `ydotool ffmpeg alsa-utils libnotify-bin
-libxcb-cursor0`. `install.sh` also sets up **ydotoold** (the ydotool daemon) and
-`/dev/uinput` access — which adds you to the `input` group, so **log out and back in
-once** after the first install for typing to work. The Python packages (PySide6,
-pynput, …) go into the standalone `.venv`.
+**apt packages it installs:** `ffmpeg alsa-utils libnotify-bin libxcb-cursor0` —
+plain CLI/X libs (the last is what Qt's xcb plugin needs). Injection needs no extra
+system tools: the paste keystroke and clipboard are handled by the bundled Python
+(pynput + Qt). The Python packages (PySide6, pynput, …) go into the standalone `.venv`.
 
 ### Or a native package (`.deb`)
 
@@ -108,21 +111,21 @@ sudo apt install ./dist/ba-ge_*.deb
 ```
 
 It's ~55 MB (the price of bundling Python + Qt) and depends only on
-`ydotool alsa-utils ffmpeg libxcb-cursor0` (its postinst wires up `/dev/uinput`).
+`alsa-utils ffmpeg libxcb-cursor0`.
 
 ## Usage
 
 ### Dictate
 
 Focus any text field, **hold F9**, speak, **release**. After a short pause
-(transcription runs on release), the text is typed in. The tray icon shows state:
+(transcription runs on release), the text is pasted in. The tray icon shows state:
 grey (idle) → red (recording) → yellow (transcribing).
 
 ### Settings
 
 Right-click the tray icon → **Settings…**, or run `ba-ge --settings`. You
 can set your **API key**, model, language, **custom vocabulary**, **hold-to-talk
-key**, **microphone**, tap threshold, typing key delay, and **autostart on login**.
+key**, **microphone**, tap threshold, and **autostart on login**.
 Saving applies live to a running app.
 
 The API key can also come from the environment (takes precedence over the file):
@@ -174,8 +177,7 @@ recordings transfer quickly.
 | `hotkey.key` | `f9` | hold-to-talk key (`f9`, `pause`, `ctrl_r`, …) |
 | `audio.device` | `default` | input device (follows the PipeWire default mic) |
 | `audio.min_duration` | `0.3` | ignore taps shorter than this (seconds) |
-| `inject.backend` | `ydotool` | keystroke injection via `/dev/uinput` (X11 + Wayland) |
-| `inject.key_delay_ms` | `20` | per-keystroke delay; raise if characters drop |
+| `inject.backend` | `paste` | paste at cursor (X11); atomic + clipboard-preserving |
 
 ## How it works
 
@@ -190,7 +192,7 @@ expect a ~0.5–2 s pause before the text appears.
 | `audio.py` / `audio_sd.py` | mic capture — `arecord` (Linux) / `sounddevice` (mac/win) |
 | `transcribe.py` | audio → text / diarized via ElevenLabs Scribe (stdlib HTTP) |
 | `filejob.py` | file → `ffmpeg` → Scribe (diarized) → speaker/timestamp text |
-| `inject.py` / `inject_pynput.py` | type text — **ydotool** (Linux, X11 + Wayland) / clipboard-paste (mac/win) |
+| `inject.py` · `clipboard.py` / `inject_pynput.py` | paste at cursor — Qt clipboard + pynput keystroke (Linux, X11) / clipboard-paste (mac/win) |
 | `ui.py` · `theme.py` · `ui_settings.py` · `ui_files.py` | **PySide6 (Qt)** tray + windows (self-contained, gi-free) |
 | `config.py` · `paths.py` · `notify.py` · `singleton.py` · `autostart.py` | config, paths, notifications, single-instance, autostart |
 
@@ -201,12 +203,12 @@ GNOME tray. All threads marshal UI work onto the Qt main thread via a signal bri
 
 ## Troubleshooting
 
-- **Nothing types at the cursor** — ydotool needs the **ydotoold** daemon and
-  `/dev/uinput` access. `install.sh`/the `.deb` set both up; if you *just* installed,
-  **log out and back in** (the `input` group needs a fresh session). Check the daemon:
-  `systemctl --user status ydotoold`.
-- **First character dropped** — ydotoold isn't running (daemonless ydotool drops the
-  first key). Start it: `systemctl --user start ydotoold`.
+- **Nothing pastes at the cursor** — the paste keystroke uses X11 (XTEST); on a
+  **Wayland** session it won't be delivered, so log into an **Xorg** session. In
+  terminals Ba-Ge auto-sends **Ctrl+Shift+V** (it reads the focused window's class).
+- **Transcript went to the wrong shortcut** — Ba-Ge picks Ctrl+Shift+V for terminals
+  and Ctrl+V elsewhere by window class; an app that pastes with a non-standard key
+  may not receive it.
 - **Silent recording / empty transcript** — the mic is muted or the wrong device is
   selected; the app warns you. Pick the right mic in **Settings → Microphone**.
 - **No app logo after install** — log out and back in once (or `Alt+F2` → `r` on

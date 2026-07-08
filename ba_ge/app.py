@@ -198,9 +198,7 @@ class DictationApp:
         self.indicator = make_indicator(
             self._request_quit, self._open_settings, self._open_transcribe,
             hotkey_name=self.config.hotkey.upper())
-        if platform.IS_LINUX:
-            from .inject import ensure_ydotoold  # reliable typing needs ydotoold running
-            ensure_ydotoold()
+        self._bind_clipboard()
         self._start_hotkey()
         self._set_state(State.IDLE)
 
@@ -245,6 +243,12 @@ class DictationApp:
         from .ui_files import choose_and_transcribe
         choose_and_transcribe(self.indicator.root, self.config)
 
+    def _bind_clipboard(self) -> None:
+        """Give the Linux paste injector the Qt clipboard manager (no-op elsewhere)."""
+        clip = getattr(self.indicator, "clipboard", None)
+        if clip is not None and hasattr(self.injector, "bind_clipboard"):
+            self.injector.bind_clipboard(clip)
+
     def reload_config(self) -> None:
         """Re-read config and rebuild config-derived components (live apply)."""
         if self.state is not State.IDLE:
@@ -253,6 +257,7 @@ class DictationApp:
         self.config = load_config()
         self.recorder = platform.make_recorder(self.config)
         self.injector = platform.make_injector(self.config)
+        self._bind_clipboard()
         self.transcribe_fn = lambda wav: transcribe(wav, self.config)
         if self._hotkey is not None:
             try:

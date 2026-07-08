@@ -53,6 +53,9 @@ class UiRuntime:
         theme.apply(self._app)
         self.root = None  # Qt windows are parentless top-levels; kept for the app.py contract
 
+        from .clipboard import ClipboardManager
+        self.clipboard = ClipboardManager(self._app)  # history stack + paste coordination
+
         class _Bridge(QObject):
             state = Signal(object)
             call = Signal(object)
@@ -67,11 +70,28 @@ class UiRuntime:
             menu.addAction("Transcribe file…", on_transcribe)
         if on_settings is not None:
             menu.addAction("Settings…", on_settings)
+        self._clip_menu = QMenu("Clipboard history")
+        self._clip_menu.aboutToShow.connect(self._rebuild_clip_menu)
+        menu.addMenu(self._clip_menu)
+        menu.addSeparator()
         menu.addAction("Quit", self.quit)
         self._menu = menu  # keep a reference
         self._tray.setContextMenu(menu)
         self._tray.setToolTip(_TIP[State.IDLE].format(hk=self._hk))
         self._tray.show()
+
+    def _rebuild_clip_menu(self) -> None:
+        self._clip_menu.clear()
+        items = self.clipboard.history()
+        if not items:
+            self._clip_menu.addAction("(empty)").setEnabled(False)
+            return
+        for text in items:
+            label = " ".join(text.split())
+            if len(label) > 48:
+                label = label[:48] + "…"
+            act = self._clip_menu.addAction(label or "(blank)")
+            act.triggered.connect(lambda _=False, t=text: self.clipboard.set_clipboard(t))
 
     # ---- tray icon ----
 

@@ -1,14 +1,14 @@
 # Ba-Ge — project guide (auto-loaded)
 
 Push-to-talk voice dictation + audio-file transcription using **ElevenLabs
-Scribe**. Hold a hotkey → record → transcribe → type at the cursor. Also
+Scribe**. Hold a hotkey → record → transcribe → paste at the cursor. Also
 transcribes audio files (with speaker labels + timestamps) and biases recognition
 with a custom-vocabulary (`keyterms`) dictionary.
 
 ## Status
-- **Linux: working and tested.** pynput hotkey · `arecord` audio · **ydotool**
-  typing (X11 + Wayland, clipboard-free) · Qt tray + settings/transcript windows ·
-  ElevenLabs Scribe.
+- **Linux: working and tested.** pynput hotkey · `arecord` audio · **paste**
+  injection (X11; Qt clipboard manager preserves the board + keeps history, pynput
+  sends Ctrl+(Shift+)V) · Qt tray + settings/transcript windows · ElevenLabs Scribe.
 - **Cross-platform port: code complete on Linux; macOS/Windows UNVERIFIED.**
   - ✅ `platform.py` factory (the only `sys.platform` in core) — `make_recorder`,
     `make_injector`, `list_input_devices`, `ffmpeg_exe`, `missing_permissions`.
@@ -23,8 +23,9 @@ with a custom-vocabulary (`keyterms`) dictionary.
     for the GNOME tray — Qt's self-contained wheels + native `QSystemTrayIcon`
     (StatusNotifier) fix both, with no gi/Tk. **GTK/tkinter/pystray are gone.**
   - ✅ audio: `audio.py` (arecord, Linux) + `audio_sd.py` (sounddevice, mac/win).
-  - ✅ inject: `inject.py` (ydotool, Linux; X11+Wayland, clipboard-free) + `inject_pynput.py`
-    (clipboard-paste default, mac/win).
+  - ✅ inject: `inject.py` + `clipboard.py` (paste at cursor, Linux X11 — the Qt
+    clipboard manager preserves the board + keeps a history stack, pynput sends
+    Ctrl+(Shift+)V) + `inject_pynput.py` (clipboard-paste, mac/win).
   - ✅ **Linux verified end-to-end** (runs on the new stack, 74 tests green).
   - ⬜ **macOS/Windows on-hardware testing** — the whole point of the
     `docs/PORTING.md` per-platform checklists. NOTHING mac/win is verified.
@@ -40,8 +41,8 @@ with a custom-vocabulary (`keyterms`) dictionary.
   **PySide6** — NOT the system Python, and no gi/Tk. Qt's wheels are self-contained,
   so nothing from apt is needed for the UI. `./install.sh` sets this up.
 - Packaging: `./build-deb.sh` → a fully self-contained `.deb` bundling the standalone
-  Python + trimmed PySide6 + app (~56 MB; Depends only on `ydotool alsa-utils
-  ffmpeg libxcb-cursor0` — **no `python3-*`, no gi**). Qt's xcb plugin needs
+  Python + trimmed PySide6 + app (~56 MB; Depends only on `alsa-utils ffmpeg
+  libxcb-cursor0` — **no `python3-*`, no gi**). Qt's xcb plugin needs
   `libxcb-cursor0`. `build-deb.sh` trims the QML/Quick/Designer stack a widget app
   never uses.
 
@@ -49,8 +50,9 @@ with a custom-vocabulary (`keyterms`) dictionary.
 `app.py` (state machine + threading) · `hotkey.py` (pynput) · `debounce.py`
 (collapse X11 auto-repeat) · `audio.py` (arecord → WAV; `peak_amplitude` silence
 guard) · `transcribe.py` (Scribe HTTP; `_base_fields` incl. keyterms) · `filejob.py`
-(ffmpeg → diarized transcript) · `inject.py` (**ydotool**; X11 + Wayland) ·
-`inject_pynput.py` (mac/win) · `ui.py` + `theme.py` + `ui_settings.py` +
+(ffmpeg → diarized transcript) · `inject.py` + `clipboard.py` (**paste**; X11, Qt
+clipboard manager + pynput) · `inject_pynput.py` (mac/win) · `ui.py` + `theme.py` +
+`ui_settings.py` +
 `ui_files.py` (**PySide6/Qt**: tray + windows) · `platform.py` (backend factory) ·
 `paths.py` · `config.py` · `notify.py` · `singleton.py` · `autostart.py`.
 

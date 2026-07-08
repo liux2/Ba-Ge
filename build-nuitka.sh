@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Build a single compiled binary with Nuitka: dist/ba-ge
 # Produces a self-contained native executable (no Python needed on the target),
-# far smaller than an Electron app. The target still needs the system tools
-# `ydotool` and `arecord` (alsa-utils) installed — they talk to the kernel and
-# cannot be bundled.
+# far smaller than an Electron app. The target still needs `arecord` (alsa-utils)
+# installed — it talks to the kernel and cannot be bundled.
+#
+# NOTE: obsolete — this is from the abandoned Nuitka/GTK spike (the project is on
+# Qt + build-deb.sh now). Kept only for reference; the gi/GTK bits below are dead.
 #
 # Needs sudo for the one-time build dependencies. GTK/PyGObject bundling with
 # Nuitka usually works out of the box; if the first run complains about an
@@ -41,4 +43,4 @@ chmod +x dist/ba-ge
 echo
 echo "Built dist/ba-ge ($(du -h dist/ba-ge | cut -f1))"
 echo "Re-run ./install.sh to point the app launcher at the compiled binary."
-echo "Reminder: target machines still need 'ydotool' and 'alsa-utils' installed."
+echo "Reminder: target machines still need 'alsa-utils' (arecord) installed."

@@ -4,65 +4,70 @@ from ba_ge.config import Config
 from ba_ge.inject import InjectionError, Injector, resolve_backend
 
 
-class Result:
-    def __init__(self, returncode=0, stderr=b"", stdout=b""):
-        self.returncode = returncode
-        self.stderr = stderr
-        self.stdout = stdout
+class FakeClipboard:
+    """Stand-in for the Qt ClipboardManager (records paste requests)."""
 
-
-class FakeRunner:
-    def __init__(self, result):
-        self.result = result
+    def __init__(self):
         self.calls = []
 
-    def __call__(self, cmd, **kwargs):
-        self.calls.append((cmd, kwargs))
-        return self.result
+    def paste_text(self, text, send_key):
+        self.calls.append((text, send_key))
 
 
 class ResolveBackendTest(unittest.TestCase):
-    def test_always_ydotool(self):
-        # xdotool (X11-only) and paste (clipboard) are retired — ydotool works on
-        # X11 + Wayland and is the single backend.
-        for pref in ("ydotool", "auto", "xdotool", "paste", ""):
-            self.assertEqual(resolve_backend(pref), "ydotool")
+    def test_always_paste(self):
+        # xdotool and ydotool are retired; paste is the single Linux backend.
+        for pref in ("paste", "auto", "xdotool", "ydotool", ""):
+            self.assertEqual(resolve_backend(pref), "paste")
 
 
-class YdotoolBackendTest(unittest.TestCase):
-    def _inj(self, runner, **kw):
-        return Injector(Config(inject_backend="ydotool", **kw), runner=runner)
+class InjectorTest(unittest.TestCase):
+    def _inj(self, clip=None):
+        return Injector(Config(), clipboard=clip)
 
-    def test_builds_stdin_command_and_sets_socket_env(self):
-        runner = FakeRunner(Result())
-        self._inj(runner, key_delay_ms=7).type_text("hello world with spaces")
-        cmd, kwargs = runner.calls[0]
-        self.assertEqual(cmd, ["ydotool", "type", "--key-delay", "7", "--file", "-"])
-        self.assertEqual(kwargs["input"], b"hello world with spaces")  # spaces intact
-        self.assertIn("YDOTOOL_SOCKET", kwargs["env"])
+    def test_empty_is_noop(self):
+        clip = FakeClipboard()
+        self._inj(clip).type_text("")
+        self.assertEqual(clip.calls, [])
 
-    def test_nonzero_exit_raises(self):
-        runner = FakeRunner(Result(returncode=1, stderr=b"uinput: permission denied"))
-        with self.assertRaises(InjectionError) as ctx:
-            self._inj(runner).type_text("hi")
-        self.assertIn("ydotool failed", str(ctx.exception))
-
-    def test_daemonless_notice_on_exit0_does_not_raise(self):
-        runner = FakeRunner(Result(returncode=0, stderr=b"ydotoold backend unavailable"))
-        self._inj(runner).type_text("hi")  # must not raise
-
-
-class CommonInjectTest(unittest.TestCase):
-    def test_empty_text_is_noop(self):
-        runner = FakeRunner(Result())
-        Injector(Config(), runner=runner).type_text("")
-        self.assertEqual(runner.calls, [])
-
-    def test_missing_binary_raises(self):
-        def boom(*a, **k):
-            raise FileNotFoundError()
+    def test_missing_clipboard_raises(self):
         with self.assertRaises(InjectionError):
-            Injector(Config(), runner=boom).type_text("hi")
+            self._inj(None).type_text("hi")
+
+    def test_delegates_text_and_key_callable(self):
+        clip = FakeClipboard()
+        self._inj(clip).type_text("hello world with spaces")
+        self.assertEqual(len(clip.calls), 1)
+        text, send_key = clip.calls[0]
+        self.assertEqual(text, "hello world with spaces")  # verbatim, atomic
+        self.assertTrue(callable(send_key))                # deferred keystroke
+
+    def test_bind_clipboard(self):
+        inj = Injector(Config())  # no clipboard yet
+        clip = FakeClipboard()
+        inj.bind_clipboard(clip)
+        inj.type_text("x")
+        self.assertEqual(clip.calls[0][0], "x")
+
+
+class TerminalDetectionTest(unittest.TestCase):
+    def _patch_class(self, value):
+        import ba_ge.inject as mod
+        orig = mod._active_window_class
+        mod._active_window_class = lambda: value
+        self.addCleanup(lambda: setattr(mod, "_active_window_class", orig))
+
+    def test_terminal_window_is_detected(self):
+        self._patch_class("ghostty com.mitchellh.ghostty")
+        self.assertTrue(Injector(Config())._active_is_terminal())
+
+    def test_gui_window_is_not_terminal(self):
+        self._patch_class("google-chrome Google-chrome")
+        self.assertFalse(Injector(Config())._active_is_terminal())
+
+    def test_unknown_window_is_not_terminal(self):
+        self._patch_class("")  # detection failed / no X
+        self.assertFalse(Injector(Config())._active_is_terminal())
 
 
 if __name__ == "__main__":

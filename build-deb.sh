@@ -33,24 +33,7 @@ rm -rf "$STAGE"
 APPDIR="$STAGE$PREFIX"
 mkdir -p "$APPDIR" "$STAGE/DEBIAN" "$STAGE/usr/bin" \
          "$STAGE/usr/share/applications" \
-         "$STAGE/usr/share/icons/hicolor/scalable/apps" \
-         "$STAGE/usr/lib/udev/rules.d" "$STAGE/usr/lib/modules-load.d" \
-         "$STAGE/usr/lib/systemd/user"
-
-# ydotool needs /dev/uinput access + the ydotoold daemon. Ship a udev rule, a
-# module-load, and a ydotoold user service; postinst wires up access.
-echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' \
-    > "$STAGE/usr/lib/udev/rules.d/80-uinput-ba-ge.rules"
-echo uinput > "$STAGE/usr/lib/modules-load.d/ba-ge-uinput.conf"
-cat > "$STAGE/usr/lib/systemd/user/ydotoold.service" <<'EOF'
-[Unit]
-Description=ydotoold — virtual input daemon (Ba-Ge)
-[Service]
-ExecStart=/usr/bin/ydotoold -p %t/.ydotool_socket -P 0660
-Restart=always
-[Install]
-WantedBy=default.target
-EOF
+         "$STAGE/usr/share/icons/hicolor/scalable/apps"
 
 echo "==> Copying + slimming bundled runtime"
 cp -r "$RT_ROOT" "$APPDIR/runtime"
@@ -115,16 +98,16 @@ Version: $VERSION
 Architecture: $ARCH
 Maintainer: Ba-Ge <ba-ge@localhost>
 Installed-Size: $INSTALLED_KB
-Depends: ydotool, alsa-utils, ffmpeg, libxcb-cursor0
+Depends: alsa-utils, ffmpeg, libxcb-cursor0
 Recommends: libnotify-bin
 Section: utils
 Priority: optional
 Description: Push-to-talk voice dictation with ElevenLabs Scribe
  Hold a hotkey, speak, release — your words are transcribed by ElevenLabs
- Scribe and typed at the cursor (via ydotool, so it works on X11 and Wayland
- and never touches the clipboard). Also transcribes audio files with speaker
- labels and timestamps. Bundles its own Python + Qt, so it does not touch the
- system Python and needs no python3-tk or PyGObject.
+ Scribe and pasted at the cursor (X11), with your clipboard preserved. Also
+ transcribes audio files with speaker labels and timestamps. Bundles its own
+ Python + Qt, so it does not touch the system Python and needs no python3-tk
+ or PyGObject.
 EOF
 
 cat > "$STAGE/DEBIAN/postinst" <<'EOF'
@@ -134,12 +117,6 @@ command -v update-desktop-database >/dev/null 2>&1 && \
     update-desktop-database /usr/share/applications 2>/dev/null || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && \
     gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
-# ydotool: load uinput, apply the udev rule, add the installing user to 'input'
-modprobe uinput 2>/dev/null || true
-udevadm control --reload-rules 2>/dev/null || true
-udevadm trigger 2>/dev/null || true
-[ -n "$SUDO_USER" ] && usermod -aG input "$SUDO_USER" 2>/dev/null || true
-echo "Ba-Ge: if typing doesn't work, log out and back in once (for the 'input' group)."
 exit 0
 EOF
 chmod 0755 "$STAGE/DEBIAN/postinst"

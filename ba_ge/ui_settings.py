@@ -7,7 +7,7 @@ import logging
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QWidget,
+    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QWidget,
 )
 
 from . import autostart, platform
@@ -127,11 +127,6 @@ class SettingsWindow(QWidget):
         self.min_dur.setValue(self.cfg.min_duration)
         add("Ignore taps shorter than (s)", self.min_dur)
 
-        self.key_delay = QSpinBox()
-        self.key_delay.setRange(0, 250)
-        self.key_delay.setValue(self.cfg.key_delay_ms)
-        add("Typing key delay (ms)", self.key_delay)
-
         self.autostart = QCheckBox("Start automatically on login")
         self.autostart.setChecked(autostart.is_enabled())
         grid.addWidget(self.autostart, row, 1)
@@ -165,10 +160,9 @@ class SettingsWindow(QWidget):
         cfg.hotkey = (self.hotkey.currentText().strip() or "f9").lower()
         cfg.audio_device = self.mic.currentData() or "default"
         cfg.min_duration = round(float(self.min_dur.value()), 2)
-        cfg.key_delay_ms = int(self.key_delay.value())
-        cfg.inject_backend = self.cfg.inject_backend or "ydotool"
+        cfg.key_delay_ms = self.cfg.key_delay_ms  # preserved for round-trip; paste ignores it
+        cfg.inject_backend = self.cfg.inject_backend or "paste"
         cfg.ui_scale = self.cfg.ui_scale
-        cfg.ydotool_socket = self.cfg.ydotool_socket
         return cfg
 
     def _save(self) -> None:

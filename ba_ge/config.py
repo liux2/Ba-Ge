@@ -105,9 +105,8 @@ channels = 1
 min_duration = 0.3        # ignore accidental taps shorter than this (seconds)
 
 [inject]
-backend = "ydotool"       # keystroke injection via uinput — X11 + Wayland, clipboard-free
-key_delay_ms = 20         # per-keystroke delay; raise if characters drop
-# ydotool_socket = "/run/user/1000/.ydotool_socket"   # override ydotoold socket (auto if unset)
+backend = "paste"         # paste at the cursor (X11); atomic + clipboard-safe
+key_delay_ms = 20         # (legacy; paste is atomic and ignores this)
 """
 
 
@@ -122,9 +121,8 @@ class Config:
     channels: int = 1
     audio_device: str = "default"
     key_delay_ms: int = 20  # inter-keystroke delay; too low can drop characters
-    inject_backend: str = "ydotool"  # ydotool (uinput; X11 + Wayland, clipboard-free)
+    inject_backend: str = "paste"  # paste at cursor (X11, clipboard-coordinated)
     ui_scale: float = 0.0  # UI zoom; 0 = auto-detect from display DPI
-    ydotool_socket: str = ""  # override ydotoold socket path; "" = auto-detect
     keyterms: list = field(default_factory=list)  # bias recognition toward these terms
     api_base: str = "https://api.elevenlabs.io"
 
@@ -183,8 +181,6 @@ def _apply_toml(cfg: Config, data: dict) -> None:
         cfg.key_delay_ms = v
     if "backend" in inj:
         cfg.inject_backend = str(inj["backend"])
-    if "ydotool_socket" in inj:
-        cfg.ydotool_socket = str(inj["ydotool_socket"])
 
     ui = data.get("ui", {})
     if (v := _num(ui, "scale", float)) is not None:
@@ -231,11 +227,6 @@ def dump_toml(cfg: Config) -> str:
         lang = f"language_code = {_toml_str(cfg.language)}"
     else:
         lang = '# language_code = "eng"   # omit to auto-detect'
-    if cfg.ydotool_socket:
-        sock = f"ydotool_socket = {_toml_str(cfg.ydotool_socket)}"
-    else:
-        sock = ('# ydotool_socket = "/run/user/1000/.ydotool_socket"   '
-                "# override ydotoold socket (auto if unset)")
     if cfg.keyterms:
         terms = ", ".join(_toml_str(t) for t in cfg.keyterms)
         keyterms = f"keyterms = [{terms}]   # ~20% cost when used"
@@ -258,9 +249,8 @@ def dump_toml(cfg: Config) -> str:
         f"channels = {cfg.channels}\n"
         f"min_duration = {cfg.min_duration}\n\n"
         "[inject]\n"
-        f'backend = {_toml_str(cfg.inject_backend)}   # ydotool (uinput; X11 + Wayland)\n'
-        f"key_delay_ms = {cfg.key_delay_ms}\n"
-        f"{sock}\n\n"
+        f'backend = {_toml_str(cfg.inject_backend)}   # paste at cursor (X11, clipboard-safe)\n'
+        f"key_delay_ms = {cfg.key_delay_ms}\n\n"
         "[ui]\n"
         f"scale = {cfg.ui_scale}   # 0 = auto-detect from display DPI (e.g. 1.5, 2.0)\n"
     )
