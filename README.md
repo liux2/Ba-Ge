@@ -73,8 +73,8 @@ you better.)
 
 - An **ElevenLabs API key** — create one at
   [elevenlabs.io](https://elevenlabs.io) (Profile → API Keys).
-- Linux with **X11** (the paste keystroke uses XTEST; a Wayland session won't
-  receive it). A tray host is needed for the indicator icon (on GNOME, the
+- Linux with **X11** (the paste keystroke is injected via `uinput`; terminal
+  detection is X11). A tray host is needed for the indicator icon (on GNOME, the
   *AppIndicator/StatusNotifier* support extension).
 
 ## Install
@@ -96,9 +96,10 @@ on PATH for most shells). Right-click the tray icon → **Settings** to paste yo
 API key.
 
 **apt packages it installs:** `ffmpeg alsa-utils libnotify-bin libxcb-cursor0` —
-plain CLI/X libs (the last is what Qt's xcb plugin needs). Injection needs no extra
-system tools: the paste keystroke and clipboard are handled by the bundled Python
-(pynput + Qt). The Python packages (PySide6, pynput, …) go into the standalone `.venv`.
+plain CLI/X libs (the last is what Qt's xcb plugin needs). No injection tools are
+needed: the clipboard is Qt's, and the paste keystroke is injected via **uinput**
+(bundled `evdev`). `install.sh` adds a udev `uaccess` rule so `/dev/uinput` is
+reachable **without** the `input` group or a re-login. Python packages go into `.venv`.
 
 ### Or a native package (`.deb`)
 
@@ -192,7 +193,7 @@ expect a ~0.5–2 s pause before the text appears.
 | `audio.py` / `audio_sd.py` | mic capture — `arecord` (Linux) / `sounddevice` (mac/win) |
 | `transcribe.py` | audio → text / diarized via ElevenLabs Scribe (stdlib HTTP) |
 | `filejob.py` | file → `ffmpeg` → Scribe (diarized) → speaker/timestamp text |
-| `inject.py` · `clipboard.py` / `inject_pynput.py` | paste at cursor — Qt clipboard + pynput keystroke (Linux, X11) / clipboard-paste (mac/win) |
+| `inject.py` · `clipboard.py` / `inject_pynput.py` | paste at cursor — Qt clipboard + **uinput** keystroke (Linux, X11) / clipboard-paste (mac/win) |
 | `ui.py` · `theme.py` · `ui_settings.py` · `ui_files.py` | **PySide6 (Qt)** tray + windows (self-contained, gi-free) |
 | `config.py` · `paths.py` · `notify.py` · `singleton.py` · `autostart.py` | config, paths, notifications, single-instance, autostart |
 
@@ -203,9 +204,13 @@ GNOME tray. All threads marshal UI work onto the Qt main thread via a signal bri
 
 ## Troubleshooting
 
-- **Nothing pastes at the cursor** — the paste keystroke uses X11 (XTEST); on a
-  **Wayland** session it won't be delivered, so log into an **Xorg** session. In
-  terminals Ba-Ge auto-sends **Ctrl+Shift+V** (it reads the focused window's class).
+- **Nothing pastes at the cursor** — the paste keystroke is injected via `uinput`,
+  so `/dev/uinput` must be writable. `install.sh`/the `.deb` add a udev `uaccess`
+  rule (no `input` group, no re-login); verify with `ls -l /dev/uinput` (should show
+  a trailing `+` ACL) and a fresh login/udev-trigger. In terminals Ba-Ge auto-sends
+  **Ctrl+Shift+V** (real device events, so GTK terminals like Ghostty honour it —
+  synthetic X events do not). If uinput is unreachable it falls back to XTEST, which
+  works in GUI apps but **not** GTK terminals.
 - **Transcript went to the wrong shortcut** — Ba-Ge picks Ctrl+Shift+V for terminals
   and Ctrl+V elsewhere by window class; an app that pastes with a non-standard key
   may not receive it.

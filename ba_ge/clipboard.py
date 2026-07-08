@@ -66,34 +66,31 @@ class ClipboardManager(QObject):
     # ---- coordinated paste (thread-safe) ----
 
     def paste_text(self, text: str, send_key) -> None:
-        """Set the clipboard to `text`, invoke `send_key()`, then restore.
+        """Set the clipboard to `text`, fire `send_key()`, then restore.
 
-        Safe to call from any thread; the clipboard work runs on the main thread.
-        `send_key` synthesises the paste shortcut (Ctrl+V / Ctrl+Shift+V).
+        Called from a worker thread. The clipboard *write* is marshalled onto the
+        main thread, but `send_key()` runs HERE (the worker) on purpose: while a Qt
+        slot executes, the event loop can't answer the target's SelectionRequest, so
+        a cross-process paste (a terminal) would read a stale/empty clipboard. Firing
+        the keystroke off the main thread keeps the loop free to serve the paste.
         """
         done = threading.Event()
-        err: dict = {}
+        box: dict = {}
 
-        def op():
-            try:
-                self._paste_on_main(text, send_key)
-            except Exception as exc:  # pragma: no cover - defensive
-                err["e"] = exc
-            finally:
-                done.set()
+        def prep():
+            box["saved"] = self._clone(self._clip.mimeData())
+            self._suppress += 1            # our set — don't record it
+            self._clip.setText(text)
+            done.set()
 
-        self._marshal.emit(op)
+        self._marshal.emit(prep)
         if not done.wait(_PASTE_TIMEOUT):
-            raise InjectionError("paste timed out (Qt main loop unresponsive)")
-        if "e" in err:
-            raise InjectionError(f"paste failed: {err['e']}")
+            raise InjectionError("clipboard set timed out (Qt main loop unresponsive)")
 
-    def _paste_on_main(self, text: str, send_key) -> None:
-        saved = self._clone(self._clip.mimeData())
-        self._suppress += 1            # our set — don't record it
-        self._clip.setText(text)
-        send_key()                     # Ctrl+V / Ctrl+Shift+V into the focused app
-        QTimer.singleShot(_RESTORE_MS, lambda: self._restore(saved))
+        send_key()  # worker thread → main loop stays free to serve the paste request
+
+        self._marshal.emit(
+            lambda: QTimer.singleShot(_RESTORE_MS, lambda: self._restore(box.get("saved"))))
 
     def _restore(self, saved) -> None:
         self._suppress += 1            # our restore — don't record it either

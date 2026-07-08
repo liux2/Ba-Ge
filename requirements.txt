@@ -13,7 +13,8 @@
 # Qt's xcb platform plugin needs on some minimal systems.
 
 PySide6-Essentials>=6.7    # Qt UI toolkit + tray (all OSes; self-contained wheel)
-pynput>=1.7                # global hotkey (all OSes) + paste keystroke/typing (also pulls python-xlib on Linux)
+pynput>=1.7                # global hotkey (all OSes) + fallback keystroke (also pulls python-xlib on Linux)
+evdev>=1.6; sys_platform == "linux"   # uinput paste keystroke — real-device events GTK terminals honour
 platformdirs>=4            # cross-platform config/cache locations
 pyperclip>=1.8             # clipboard (paste injection on macOS/Windows)
 sounddevice>=0.4           # audio capture on macOS/Windows (Linux uses arecord)

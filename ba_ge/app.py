@@ -199,6 +199,9 @@ class DictationApp:
             self._request_quit, self._open_settings, self._open_transcribe,
             hotkey_name=self.config.hotkey.upper())
         self._bind_clipboard()
+        if platform.IS_LINUX:
+            from .inject import ensure_device  # pre-create the uinput paste device
+            ensure_device()
         self._start_hotkey()
         self._set_state(State.IDLE)
 
@@ -273,6 +276,9 @@ class DictationApp:
 
     def _shutdown(self) -> None:
         self._disarm_busy_watchdog()
+        if platform.IS_LINUX:
+            from .inject import close_device
+            close_device()
         if self._hotkey is not None:
             try:
                 self._hotkey.stop()

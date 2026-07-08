@@ -1,17 +1,20 @@
 """Insert text at the cursor by pasting — fast and atomic.
 
-Ba-Ge sets the clipboard to the transcript, sends the paste shortcut (Ctrl+V, or
-Ctrl+Shift+V in terminals), and restores the previous clipboard — all coordinated
-through the bundled clipboard manager (`ba_ge/clipboard.py`), so dictation never
-pollutes your clipboard or its history, and it's instant (no per-key typing).
+Ba-Ge sets the clipboard (via the bundled Qt clipboard manager) and sends the
+paste shortcut (Ctrl+V, or Ctrl+Shift+V in terminals). The keystroke is sent via
+**uinput** (evdev): kernel-level events that behave like real hardware, so GTK
+terminals such as Ghostty honour their paste *keybind* for them. Synthetic X
+(XTEST/pynput) events do NOT trigger those keybinds — hence uinput.
 
-The paste keystroke is synthesised with **pynput** (XTEST) — X11 only. xdotool and
-ydotool are retired.
+`/dev/uinput` is reachable without root via the systemd-logind `uaccess` ACL (no
+input-group membership needed). If uinput is unavailable we fall back to
+pynput/XTEST, which still works for ordinary GUI apps.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 
 log = logging.getLogger("bage.inject")
 
@@ -21,6 +24,10 @@ _TERMINAL_HINTS = ("terminal", "konsole", "xterm", "alacritty", "kitty",
                    "foot", "ptyxis", "ghostty", "warp", "hyper", "tabby",
                    "urxvt", "termite", "sakura", "roxterm", "contour", "wave")
 
+_REGISTER_DELAY = 0.4   # one-time: let the compositor notice the new uinput device
+_MOD_SETTLE = 0.022     # let each modifier register before the next key (chord safety)
+_KEY_HOLD = 0.022       # hold V so GTK matches the paste keybind (not a passthrough)
+
 
 class InjectionError(Exception):
     pass
@@ -28,6 +35,91 @@ class InjectionError(Exception):
 
 def resolve_backend(pref: str) -> str:
     return "paste"
+
+
+# ---- uinput keystroke (persistent virtual keyboard) ----
+
+_uinput_dev = None
+_uinput_failed = False
+
+
+def _get_uinput():
+    """Lazily create ONE persistent uinput device; None if unavailable."""
+    global _uinput_dev, _uinput_failed
+    if _uinput_dev is not None:
+        return _uinput_dev
+    if _uinput_failed:
+        return None
+    try:
+        from evdev import UInput, ecodes as e
+        caps = {e.EV_KEY: [e.KEY_LEFTCTRL, e.KEY_LEFTSHIFT, e.KEY_V]}
+        dev = UInput(caps, name="ba-ge-virtual-kbd")
+        time.sleep(_REGISTER_DELAY)  # once, so the first paste isn't dropped
+        _uinput_dev = dev
+        log.info("uinput paste device ready")
+        return dev
+    except Exception:
+        _uinput_failed = True
+        log.warning("uinput unavailable; falling back to XTEST (paste keybinds may "
+                    "not fire in GTK terminals). Check /dev/uinput access.",
+                    exc_info=True)
+        return None
+
+
+def ensure_device() -> None:
+    """Pre-create the uinput device at startup so the first paste is instant."""
+    _get_uinput()
+
+
+def close_device() -> None:
+    global _uinput_dev
+    if _uinput_dev is not None:
+        try:
+            _uinput_dev.close()
+        except Exception:
+            pass
+        _uinput_dev = None
+
+
+def _send_via_uinput(terminal: bool) -> bool:
+    from evdev import ecodes as e
+    dev = _get_uinput()
+    if dev is None:
+        return False
+    # Emit each key as its OWN synced event (like real hardware) with human-scale
+    # timing: modifiers must settle in the input state BEFORE V, or GTK terminals
+    # miss the paste keybind and pass V through as a key sequence (CSI-u).
+    mods = [e.KEY_LEFTCTRL, e.KEY_LEFTSHIFT] if terminal else [e.KEY_LEFTCTRL]
+
+    def ev(code, value):
+        dev.write(e.EV_KEY, code, value)
+        dev.syn()
+
+    for m in mods:               # press Ctrl (, Shift), settling each
+        ev(m, 1)
+        time.sleep(_MOD_SETTLE)
+    ev(e.KEY_V, 1)               # V with the chord held
+    time.sleep(_KEY_HOLD)
+    ev(e.KEY_V, 0)
+    time.sleep(_MOD_SETTLE)
+    for m in reversed(mods):     # release Shift, then Ctrl
+        ev(m, 0)
+        time.sleep(0.008)
+    return True
+
+
+def _send_via_pynput(terminal: bool) -> None:
+    from pynput.keyboard import Controller, Key
+    kb = Controller()
+    mods = (Key.ctrl, Key.shift) if terminal else (Key.ctrl,)
+    for m in mods:
+        kb.press(m)
+    try:
+        kb.press("v")
+        kb.release("v")
+    finally:
+        for m in reversed(mods):
+            kb.release(m)
 
 
 class Injector:
@@ -54,17 +146,8 @@ class Injector:
 
     @staticmethod
     def _send_paste_key(terminal: bool) -> None:
-        from pynput.keyboard import Controller, Key
-        kb = Controller()
-        mods = (Key.ctrl, Key.shift) if terminal else (Key.ctrl,)
-        for m in mods:
-            kb.press(m)
-        try:
-            kb.press("v")
-            kb.release("v")
-        finally:
-            for m in reversed(mods):
-                kb.release(m)
+        if not _send_via_uinput(terminal):  # kernel-level: works in GTK terminals
+            _send_via_pynput(terminal)      # fallback: GUI apps only
 
 
 def _active_window_class() -> str:

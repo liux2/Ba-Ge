@@ -7,8 +7,17 @@ with a custom-vocabulary (`keyterms`) dictionary.
 
 ## Status
 - **Linux: working and tested.** pynput hotkey · `arecord` audio · **paste**
-  injection (X11; Qt clipboard manager preserves the board + keeps history, pynput
-  sends Ctrl+(Shift+)V) · Qt tray + settings/transcript windows · ElevenLabs Scribe.
+  injection (X11; Qt clipboard manager preserves the board + keeps history, and the
+  Ctrl+(Shift+)V keystroke is sent via **uinput** — see the note below) · Qt tray +
+  settings/transcript windows · ElevenLabs Scribe.
+  - **Injection note (hard-won):** GTK terminals (Ghostty) ignore synthetic X
+    (XTEST/pynput) events for paste *keybinds* — they only fire for real-device
+    (uinput) events. So the paste key goes through `evdev` uinput (`/dev/uinput` via
+    a udev `uaccess` ACL — no `input` group / re-login). Two subtleties: (1) send the
+    keystroke OFF the Qt main thread, or the event loop can't serve the target's
+    clipboard SelectionRequest and the paste reads empty; (2) emit each key as its own
+    synced event with ~20ms settle, or the chord races and V passes through as CSI-u.
+    pynput/XTEST remains the fallback (works in GUI apps, not GTK terminals).
 - **Cross-platform port: code complete on Linux; macOS/Windows UNVERIFIED.**
   - ✅ `platform.py` factory (the only `sys.platform` in core) — `make_recorder`,
     `make_injector`, `list_input_devices`, `ffmpeg_exe`, `missing_permissions`.
@@ -24,8 +33,8 @@ with a custom-vocabulary (`keyterms`) dictionary.
     (StatusNotifier) fix both, with no gi/Tk. **GTK/tkinter/pystray are gone.**
   - ✅ audio: `audio.py` (arecord, Linux) + `audio_sd.py` (sounddevice, mac/win).
   - ✅ inject: `inject.py` + `clipboard.py` (paste at cursor, Linux X11 — the Qt
-    clipboard manager preserves the board + keeps a history stack, pynput sends
-    Ctrl+(Shift+)V) + `inject_pynput.py` (clipboard-paste, mac/win).
+    clipboard manager preserves the board + keeps a history stack; the keystroke is
+    sent via **uinput/evdev**, XTEST/pynput fallback) + `inject_pynput.py` (mac/win).
   - ✅ **Linux verified end-to-end** (runs on the new stack, 74 tests green).
   - ⬜ **macOS/Windows on-hardware testing** — the whole point of the
     `docs/PORTING.md` per-platform checklists. NOTHING mac/win is verified.
@@ -51,7 +60,7 @@ with a custom-vocabulary (`keyterms`) dictionary.
 (collapse X11 auto-repeat) · `audio.py` (arecord → WAV; `peak_amplitude` silence
 guard) · `transcribe.py` (Scribe HTTP; `_base_fields` incl. keyterms) · `filejob.py`
 (ffmpeg → diarized transcript) · `inject.py` + `clipboard.py` (**paste**; X11, Qt
-clipboard manager + pynput) · `inject_pynput.py` (mac/win) · `ui.py` + `theme.py` +
+clipboard manager + uinput keystroke) · `inject_pynput.py` (mac/win) · `ui.py` + `theme.py` +
 `ui_settings.py` +
 `ui_files.py` (**PySide6/Qt**: tray + windows) · `platform.py` (backend factory) ·
 `paths.py` · `config.py` · `notify.py` · `singleton.py` · `autostart.py`.

@@ -33,7 +33,15 @@ rm -rf "$STAGE"
 APPDIR="$STAGE$PREFIX"
 mkdir -p "$APPDIR" "$STAGE/DEBIAN" "$STAGE/usr/bin" \
          "$STAGE/usr/share/applications" \
-         "$STAGE/usr/share/icons/hicolor/scalable/apps"
+         "$STAGE/usr/share/icons/hicolor/scalable/apps" \
+         "$STAGE/usr/lib/udev/rules.d" "$STAGE/usr/lib/modules-load.d"
+
+# The paste keystroke is injected via uinput (real device events, which GTK
+# terminals honour). Grant the logged-in user access with a `uaccess` ACL — no
+# 'input' group, no re-login, no daemon.
+printf '%s\n' 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' \
+    > "$STAGE/usr/lib/udev/rules.d/70-ba-ge-uinput.rules"
+echo uinput > "$STAGE/usr/lib/modules-load.d/ba-ge-uinput.conf"
 
 echo "==> Copying + slimming bundled runtime"
 cp -r "$RT_ROOT" "$APPDIR/runtime"
@@ -117,6 +125,10 @@ command -v update-desktop-database >/dev/null 2>&1 && \
     update-desktop-database /usr/share/applications 2>/dev/null || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && \
     gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+# uinput: load the module + apply the uaccess rule so paste works this session
+modprobe uinput 2>/dev/null || true
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger /dev/uinput 2>/dev/null || true
 exit 0
 EOF
 chmod 0755 "$STAGE/DEBIAN/postinst"

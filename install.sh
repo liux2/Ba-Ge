@@ -27,6 +27,19 @@ else
     echo "!! Non-apt distro — install equivalents of: ${MISSING[*]}"
 fi
 
+# --- 1b. /dev/uinput access — the paste keystroke is injected via uinput (real
+#         device events, which GTK terminals like Ghostty honour). `uaccess` grants
+#         the logged-in user via ACL: no 'input' group, no re-login, no daemon.
+if command -v sudo >/dev/null 2>&1; then
+    echo "==> Enabling /dev/uinput access (fast paste keystroke)"
+    sudo modprobe uinput 2>/dev/null || true
+    echo uinput | sudo tee /etc/modules-load.d/ba-ge-uinput.conf >/dev/null 2>&1 || true
+    printf '%s\n' 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' \
+        | sudo tee /etc/udev/rules.d/70-ba-ge-uinput.rules >/dev/null 2>&1 || true
+    sudo udevadm control --reload-rules 2>/dev/null || true
+    sudo udevadm trigger /dev/uinput 2>/dev/null || true
+fi
+
 # --- 2. uv (bootstrap into ~/.local/bin if missing) ---
 if ! command -v uv >/dev/null 2>&1; then
     echo "==> Installing uv (standalone package manager)"
