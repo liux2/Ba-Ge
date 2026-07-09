@@ -194,7 +194,7 @@ expect a ~0.5–2 s pause before the text appears.
 | `transcribe.py` | audio → text / diarized via ElevenLabs Scribe (stdlib HTTP) |
 | `filejob.py` | file → `ffmpeg` → Scribe (diarized) → speaker/timestamp text |
 | `inject.py` · `clipboard.py` / `inject_pynput.py` | paste at cursor — Qt clipboard + **uinput** keystroke (Linux, X11) / clipboard-paste (mac/win) |
-| `ui.py` · `theme.py` · `ui_settings.py` · `ui_files.py` | **PySide6 (Qt)** tray + windows (self-contained, gi-free) |
+| `ui.py` · `theme.py` · `ui_settings.py` · `ui_files.py` · `ui_clipboard.py` | **PySide6 (Qt)** tray + windows (settings, transcribe, clipboard history) |
 | `config.py` · `paths.py` · `notify.py` · `singleton.py` · `autostart.py` | config, paths, notifications, single-instance, autostart |
 
 **Design note:** the whole UI (tray + windows) is Qt. Qt's wheels are

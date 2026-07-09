@@ -61,6 +61,10 @@ class ClipboardManager(QObject):
     def history(self) -> list:
         return list(self._history)
 
+    def clear_history(self) -> None:
+        self._history.clear()
+        self.historyChanged.emit()
+
     def set_clipboard(self, text: str) -> None:
         """Put a history entry back on the clipboard (from the tray menu)."""
         self._marshal.emit(lambda: self._clip.setText(text))

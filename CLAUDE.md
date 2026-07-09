@@ -26,7 +26,7 @@ with a custom-vocabulary (`keyterms`) dictionary.
   - ✅ `ui.py` — **PySide6 (Qt)** runtime (the #1-risk event-loop pattern:
     QApplication owns main thread, `QSystemTrayIcon` on it, cross-thread work
     marshalled via a QObject `Signal` bridge — queued to main). `theme.py` sets a
-    dark Fusion palette; `ui_settings.py` / `ui_files.py` are the Qt windows
+    dark Fusion palette; `ui_settings.py` / `ui_files.py` / `ui_clipboard.py` are the Qt windows
     (`QFileDialog` replaces the old zenity picker). **Why Qt:** the uv-standalone
     Python's Tk aborts on window ops (static libxcb) AND pystray needs PyGObject
     for the GNOME tray — Qt's self-contained wheels + native `QSystemTrayIcon`

@@ -70,33 +70,19 @@ class UiRuntime:
             menu.addAction("Transcribe file…", on_transcribe)
         if on_settings is not None:
             menu.addAction("Settings…", on_settings)
-        self._clip_menu = QMenu("Clipboard history")
-        self._clip_menu.aboutToShow.connect(self._rebuild_clip_menu)
-        menu.addMenu(self._clip_menu)
+        # A window, not a tray submenu: GNOME exports the tray menu via DBusMenu as a
+        # static snapshot, so a dynamically-populated submenu never fills in there.
+        menu.addAction("Clipboard history…", self._open_clipboard)
         menu.addSeparator()
         menu.addAction("Quit", self.quit)
         self._menu = menu  # keep a reference
         self._tray.setContextMenu(menu)
         self._tray.setToolTip(_TIP[State.IDLE].format(hk=self._hk))
         self._tray.show()
-        # The GNOME tray exports the menu via DBusMenu, which serialises it up front
-        # and doesn't reliably fire aboutToShow — so rebuild the submenu eagerly
-        # whenever the clipboard history changes, keeping the exported menu current.
-        self.clipboard.historyChanged.connect(self._rebuild_clip_menu)
-        self._rebuild_clip_menu()
 
-    def _rebuild_clip_menu(self) -> None:
-        self._clip_menu.clear()
-        items = self.clipboard.history()
-        if not items:
-            self._clip_menu.addAction("(empty)").setEnabled(False)
-            return
-        for text in items:
-            label = " ".join(text.split())
-            if len(label) > 48:
-                label = label[:48] + "…"
-            act = self._clip_menu.addAction(label or "(blank)")
-            act.triggered.connect(lambda _=False, t=text: self.clipboard.set_clipboard(t))
+    def _open_clipboard(self) -> None:
+        from .ui_clipboard import open_clipboard_window
+        open_clipboard_window(self.clipboard)
 
     # ---- tray icon ----
 
