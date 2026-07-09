@@ -26,7 +26,8 @@ _PASTE_TIMEOUT = 8  # worker-thread guard so a wedged main loop can't hang dicta
 
 
 class ClipboardManager(QObject):
-    _marshal = Signal(object)  # run a callable on the main (GUI) thread
+    _marshal = Signal(object)   # run a callable on the main (GUI) thread
+    historyChanged = Signal()   # emitted when a new entry is recorded (for the tray)
 
     def __init__(self, app, history_size: int = 20):
         super().__init__()
@@ -55,6 +56,7 @@ class ClipboardManager(QObject):
             except ValueError:
                 pass
             self._history.appendleft(text)
+            self.historyChanged.emit()  # rebuild the tray submenu proactively
 
     def history(self) -> list:
         return list(self._history)

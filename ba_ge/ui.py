@@ -79,6 +79,11 @@ class UiRuntime:
         self._tray.setContextMenu(menu)
         self._tray.setToolTip(_TIP[State.IDLE].format(hk=self._hk))
         self._tray.show()
+        # The GNOME tray exports the menu via DBusMenu, which serialises it up front
+        # and doesn't reliably fire aboutToShow — so rebuild the submenu eagerly
+        # whenever the clipboard history changes, keeping the exported menu current.
+        self.clipboard.historyChanged.connect(self._rebuild_clip_menu)
+        self._rebuild_clip_menu()
 
     def _rebuild_clip_menu(self) -> None:
         self._clip_menu.clear()
