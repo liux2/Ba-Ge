@@ -94,6 +94,18 @@ class StateMachineTest(unittest.TestCase):
         app.on_press()  # second press must be a no-op
         self.assertIs(app.state, State.RECORDING)
 
+    def test_toggle_mode_taps_start_then_stop(self):
+        app, rec, inj, ind = make_app(config=Config(api_key="sk-real", hotkey_mode="toggle"))
+        app.on_press()  # first tap: start
+        self.assertIs(app.state, State.RECORDING)
+        self.assertTrue(rec.started)
+        app.on_release()  # tap release must NOT stop in toggle mode
+        self.assertIs(app.state, State.RECORDING)
+        self.assertEqual(inj.typed, [])
+        app.on_press()  # second tap: stop + transcribe
+        self.assertEqual(inj.typed, ["transcribed text"])
+        self.assertIs(app.state, State.IDLE)
+
     def test_too_short_recording_types_nothing(self):
         app, rec, inj, ind = make_app(recorder=FakeRecorder(wav=None))
         app.on_press()

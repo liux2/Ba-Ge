@@ -39,7 +39,11 @@ _TIP = {
 class UiRuntime:
     owns_main_loop = True
 
-    def __init__(self, on_quit, on_settings=None, on_transcribe=None, hotkey_name="F9"):
+    def __init__(self, on_quit, on_settings=None, on_transcribe=None, hotkey_name="F9",
+                 on_permissions=None):
+        from . import platform
+        platform.ensure_qt_plugins()  # macOS: stage plugins out of protected folders
+
         from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
         from PySide6.QtCore import QObject, Signal
 
@@ -70,6 +74,8 @@ class UiRuntime:
             menu.addAction("Transcribe file…", on_transcribe)
         if on_settings is not None:
             menu.addAction("Settings…", on_settings)
+        if on_permissions is not None and platform.IS_MAC:
+            menu.addAction("Permissions…", on_permissions)
         # A window, not a tray submenu: GNOME exports the tray menu via DBusMenu as a
         # static snapshot, so a dynamically-populated submenu never fills in there.
         menu.addAction("Clipboard history…", self._open_clipboard)
@@ -148,5 +154,7 @@ class UiRuntime:
             self._app.quit()
 
 
-def make_indicator(on_quit, on_settings=None, on_transcribe=None, hotkey_name="F9"):
-    return UiRuntime(on_quit, on_settings, on_transcribe, hotkey_name)
+def make_indicator(on_quit, on_settings=None, on_transcribe=None, hotkey_name="F9",
+                   on_permissions=None):
+    return UiRuntime(on_quit, on_settings, on_transcribe, hotkey_name,
+                     on_permissions=on_permissions)

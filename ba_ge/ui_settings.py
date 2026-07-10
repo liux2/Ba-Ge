@@ -18,9 +18,53 @@ from .config import (
 log = logging.getLogger("bage.ui.settings")
 
 _MODELS = ["scribe_v2", "scribe_v1"]
-_HOTKEYS = ["f9", "f8", "f10", "f7", "pause", "scroll_lock", "ctrl_r"]
+_HOTKEYS = ["f9", "f8", "f10", "f7", "space", "cmd_r", "ctrl_r", "caps_lock",
+            "pause", "scroll_lock"]
 
 _current: dict = {"win": None}
+
+# macOS virtual keycodes for keys Qt can't name precisely (esp. left/right
+# modifiers). Maps to the pynput alias names that hotkey.resolve_key understands.
+_MAC_VK = {
+    54: "cmd_r", 55: "cmd_l", 56: "shift_l", 60: "shift_r", 58: "alt_l",
+    61: "alt_r", 59: "ctrl_l", 62: "ctrl_r", 57: "caps_lock", 63: "",  # fn: unusable
+    49: "space", 48: "tab", 53: "esc",
+}
+
+
+def _qt_event_to_hotkey_name(event):
+    """Translate a captured Qt key event to a Ba-Ge hotkey name, or None if the key
+    isn't usable. Returns names that ``hotkey.resolve_key`` accepts."""
+    from PySide6.QtCore import Qt
+
+    from . import hotkey
+    if platform.IS_MAC:
+        name = _MAC_VK.get(event.nativeVirtualKey())
+        if name == "":
+            return None  # explicitly unusable (fn)
+        if name:
+            return name
+    key = event.key()
+    if Qt.Key_F1 <= key <= Qt.Key_F35:
+        name = f"f{key - Qt.Key_F1 + 1}"
+    else:
+        named = {
+            Qt.Key_Space: "space", Qt.Key_Tab: "tab", Qt.Key_Escape: "esc",
+            Qt.Key_CapsLock: "caps_lock", Qt.Key_Home: "home", Qt.Key_End: "end",
+            Qt.Key_Insert: "insert", Qt.Key_Pause: "pause",
+        }
+        if key in named:
+            name = named[key]
+        else:
+            text = event.text().strip().lower()
+            name = text if (len(text) == 1 and text.isalnum()) else None
+    if not name:
+        return None
+    try:
+        hotkey.resolve_key(name)  # validate it round-trips
+        return name
+    except Exception:
+        return None
 
 
 def open_settings(root=None, exec_cmd: str = "ba-ge", on_saved=None) -> None:
@@ -41,7 +85,8 @@ def open_settings(root=None, exec_cmd: str = "ba-ge", on_saved=None) -> None:
 
 def run_settings(exec_cmd: str = "ba-ge") -> None:
     """Standalone settings window with its own event loop (for `--settings`)."""
-    from . import theme
+    from . import platform, theme
+    platform.ensure_qt_plugins()  # macOS: stage plugins out of protected folders
     app = QApplication.instance() or QApplication([])
     theme.apply(app)
     win = SettingsWindow(exec_cmd, on_saved=None)
@@ -55,6 +100,7 @@ class SettingsWindow(QWidget):
         self.exec_cmd = exec_cmd
         self.on_saved = on_saved
         self.cfg = load_config()
+        self._capturing = False
         self.setWindowTitle("Ba-Ge — Settings")
 
         grid = QGridLayout(self)
@@ -70,6 +116,19 @@ class SettingsWindow(QWidget):
             lab.setAlignment(Qt.AlignRight | (Qt.AlignTop if top else Qt.AlignVCenter))
             grid.addWidget(lab, row, 0)
             grid.addWidget(widget, row, 1, 1, span)
+            row += 1
+
+        # macOS: a banner when TCC grants are still missing (dictation silently
+        # won't work without them). Click opens the guided permissions panel.
+        missing = platform.missing_permissions()
+        if missing:
+            banner = QPushButton("⚠  Grant macOS permissions to dictate "
+                                 f"({', '.join(missing)}) →")
+            banner.setStyleSheet(
+                "text-align:left; padding:8px 12px; color:#f0c040;"
+                "border:1px solid #f0c040; border-radius:6px;")
+            banner.clicked.connect(self._open_permissions)
+            grid.addWidget(banner, row, 0, 1, 2)
             row += 1
 
         # API key + show toggle
@@ -108,7 +167,25 @@ class SettingsWindow(QWidget):
         self.hotkey.setEditable(True)
         self.hotkey.addItems(_HOTKEYS)
         self.hotkey.setCurrentText(self.cfg.hotkey)
-        add("Hold-to-talk key", self.hotkey)
+        self._record_btn = QPushButton("⌨ Record")
+        self._record_btn.setToolTip("Click, then press the key you want to use")
+        self._record_btn.clicked.connect(self._toggle_record_hotkey)
+        hkrow = QHBoxLayout()
+        hkrow.addWidget(self.hotkey, 1)
+        hkrow.addWidget(self._record_btn)
+        grid.addWidget(QLabel("Hotkey"), row, 0, Qt.AlignRight)
+        grid.addLayout(hkrow, row, 1)
+        row += 1
+
+        self.mode = QComboBox()
+        self.mode.addItem("Hold to talk (push-to-talk)", "hold")
+        self.mode.addItem("Toggle (tap to start, tap to stop)", "toggle")
+        self.mode.setCurrentIndex(1 if self.cfg.hotkey_mode == "toggle" else 0)
+        add("Recording mode", self.mode)
+        mode_hint = QLabel("Toggle avoids holding the key — good for normal keys like Space.")
+        mode_hint.setStyleSheet("color:#8a8a8a")
+        grid.addWidget(mode_hint, row, 1)
+        row += 1
 
         self.mic = QComboBox()
         self._mic_devs = []
@@ -151,6 +228,41 @@ class SettingsWindow(QWidget):
 
         self.resize(560, self.sizeHint().height())
 
+    def _open_permissions(self) -> None:
+        from .ui_permissions import open_permissions_window
+        open_permissions_window()
+
+    # ---- record-a-hotkey capture ----
+
+    def _toggle_record_hotkey(self) -> None:
+        if self._capturing:
+            self._end_capture()
+        else:
+            self._capturing = True
+            self._record_btn.setText("Press a key…")
+            self.status.setText("Press the key you want to hold/tap to dictate "
+                                "(Esc-key still selectable).")
+            self.grabKeyboard()
+
+    def _end_capture(self) -> None:
+        self._capturing = False
+        try:
+            self.releaseKeyboard()
+        except Exception:
+            pass
+        self._record_btn.setText("⌨ Record")
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self._capturing:
+            name = _qt_event_to_hotkey_name(event)
+            if name:
+                self.hotkey.setCurrentText(name)
+                self._end_capture()
+                self.status.setText(f"Hotkey set to “{name}”. Click Save to apply.")
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def _collect(self) -> Config:
         cfg = Config()
         cfg.api_key = self.api.text().strip()
@@ -158,6 +270,7 @@ class SettingsWindow(QWidget):
         cfg.language = self.lang.text().strip() or None
         cfg.keyterms = parse_keyterms(self.keyterms.toPlainText())
         cfg.hotkey = (self.hotkey.currentText().strip() or "f9").lower()
+        cfg.hotkey_mode = self.mode.currentData() or "hold"
         cfg.audio_device = self.mic.currentData() or "default"
         cfg.min_duration = round(float(self.min_dur.value()), 2)
         cfg.key_delay_ms = self.cfg.key_delay_ms  # preserved for round-trip; paste ignores it

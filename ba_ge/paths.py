@@ -31,5 +31,8 @@ def transcript_log() -> Path:
     return cache_dir() / "transcripts.log"
 
 
-def lock_path() -> Path:
-    return cache_dir() / "ba-ge.lock"
+def lock_path(name: str = "ba-ge") -> Path:
+    # Distinct single-instance names get distinct lock files (a fixed filename
+    # would make unrelated names collide on the same POSIX lock).
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    return cache_dir() / f"{safe}.lock"

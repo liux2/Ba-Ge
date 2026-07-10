@@ -20,6 +20,8 @@ except Exception:  # pragma: no cover - PySide6 always present in the dev venv
 class ClipboardManagerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        from ba_ge import platform
+        platform.ensure_qt_plugins()  # macOS: stage plugins out of protected folders
         cls.app = QApplication.instance() or QApplication([])
 
     def _mgr(self, size=20):

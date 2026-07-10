@@ -20,6 +20,11 @@ log = logging.getLogger("bage.singleton")
 
 # Keep sockets / file handles / mutex handles alive for the whole process.
 _held: list = []
+# Names already acquired by THIS process. POSIX advisory locks (flock/lockf) are
+# owned by the process, so a second acquire of the same file from the same process
+# would merely refresh the lock instead of failing — track names to reproduce the
+# Linux abstract-socket semantics (a duplicate acquire in one process fails too).
+_held_names: set[str] = set()
 
 
 def acquire(name: str = "ba-ge") -> bool:
@@ -46,7 +51,9 @@ def _acquire_abstract_socket(name: str) -> bool:
 def _acquire_lockfile(name: str) -> bool:
     import fcntl
 
-    path = paths.lock_path()
+    if name in _held_names:  # same-process duplicate — flock alone wouldn't catch it
+        return False
+    path = paths.lock_path(name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fh = open(path, "w")
@@ -54,6 +61,7 @@ def _acquire_lockfile(name: str) -> bool:
     except OSError:
         return False
     _held.append(fh)
+    _held_names.add(name)
     return True
 
 

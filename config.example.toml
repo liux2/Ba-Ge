@@ -10,8 +10,11 @@ model_id = "scribe_v2"
 # language_code = "eng"   # omit to auto-detect
 
 [hotkey]
-# Hold-to-talk key. Examples: "f9", "pause", "ctrl_r", "scroll_lock"
+# Trigger key. Examples: "f9", "space", "cmd_r", "ctrl_r", "caps_lock", "pause".
+# Tip: in Settings, click "⌨ Record" and press the key you want instead.
 key = "f9"
+# mode: "hold" = push-to-talk (hold the key) · "toggle" = tap to start, tap to stop.
+mode = "hold"
 
 [audio]
 device = "default"        # ALSA device; "default" follows the PipeWire default mic
