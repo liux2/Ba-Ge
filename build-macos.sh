@@ -82,6 +82,7 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='Ba-Ge',
           console=False, disable_windowed_traceback=False)
 coll = COLLECT(exe, a.binaries, a.datas, name='Ba-Ge')  # onedir: fast tray startup
 app = BUNDLE(coll, name='Ba-Ge.app',
+             icon='packaging/ba-ge.icns',  # Finder/Dock/DMG icon (matches Linux)
              bundle_identifier='com.ba-ge.app',
              info_plist={
                  'NSMicrophoneUsageDescription':
