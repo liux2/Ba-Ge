@@ -4,28 +4,28 @@
 
 **Push-to-talk voice dictation, tuned for bilingual 中 ↔ EN speech — powered by [ElevenLabs Scribe](https://elevenlabs.io/speech-to-text).**
 
-Hold a key, speak, release → your words appear at the cursor. \
+Hold (or tap) a key, speak → your words appear at the cursor. \
 Named after the *mynah bird* (八哥), a natural multilingual mimic.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Linux%20(X11)-333)
+![Platform](https://img.shields.io/badge/platform-Linux%20·%20macOS-333)
 ![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
 ![UI](https://img.shields.io/badge/UI-PySide6%20·%20Qt-41CD52?logo=qt&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-74%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-81%20passing-brightgreen)
 
 <img src="docs/screenshot.png" alt="Ba-Ge settings" width="620">
 
 </div>
 
 ```
-[hold F9]  speak…  [release]  →  ElevenLabs Scribe  →  text pasted at the cursor
+[hold cmd_r]  speak…  [release]  →  ElevenLabs Scribe  →  text pasted at the cursor
 ```
 
 It also transcribes audio files with **speaker labels + timestamps** (diarization).
 
-> **Platforms:** Linux (X11) — fully tested. The code is cross-platform (Qt +
-> pynput), so macOS/Windows are in reach, but they're **unverified on hardware** —
-> see [`docs/PORTING.md`](docs/PORTING.md).
+> **Platforms:** **Linux (X11)** and **macOS (Apple Silicon)** are both working and
+> tested on hardware. One codebase (Qt + pynput) with per-OS backends; **Windows** is
+> wired but unverified — see [`docs/PORTING.md`](docs/PORTING.md).
 
 ## Why ElevenLabs Scribe?
 
@@ -54,10 +54,14 @@ you better.)
 
 ## Features
 
-- **Hold-to-talk dictation** — hold F9 (configurable), speak, release; the
+- **Hold- or tap-to-talk dictation** — **hold** the hotkey (push-to-talk) or switch
+  to **toggle** mode (tap once to start, tap again to stop); speak, and the
   transcript is pasted at the cursor.
+- **Record any hotkey** — click **⌨ Record** in Settings and press the key you want:
+  function keys, `space`, `caps_lock`, or a left/right modifier like right ⌘ / right
+  Ctrl. (Right ⌘ is the cleanest push-to-talk key — it types nothing while held.)
 - **Instant paste injection** — inserts the whole transcript in one shot (no slow
-  per-key typing), auto-using **Ctrl+Shift+V** in terminals.
+  per-key typing); on Linux it auto-uses **Ctrl+Shift+V** in terminals.
 - **Clipboard preserved** — a built-in manager restores your previous clipboard
   after each paste, so dictation never clobbers what you copied; it also keeps a
   small **history stack** (tray → *Clipboard history*).
@@ -66,18 +70,24 @@ you better.)
 - **Custom vocabulary** — bias recognition toward names, jargon, and product terms
   (applies to live dictation *and* files, across both languages).
 - **Native Qt tray + settings UI**, desktop notifications, autostart-on-login.
-- **Self-contained** — bundles its own Python + Qt. The `.deb` needs no system
-  Python, `python3-tk`, or PyGObject.
+- **macOS: guided permissions + code signing** — a built-in panel walks you through
+  the three TCC grants (Input Monitoring, Accessibility, Microphone) with live status;
+  `build-macos.sh` produces a **signed, hardened-runtime `.app`** so those grants
+  persist, and `build-dmg.sh` packages a drag-to-Applications `.dmg`.
+- **Self-contained** — bundles its own Python + Qt. The Linux `.deb` needs no system
+  Python, `python3-tk`, or PyGObject; the macOS `.app` bundles everything too.
 
 ## Requirements
 
 - An **ElevenLabs API key** — create one at
   [elevenlabs.io](https://elevenlabs.io) (Profile → API Keys).
-- Linux with **X11** (the paste keystroke is injected via `uinput`; terminal
+- **Linux** with **X11** (the paste keystroke is injected via `uinput`; terminal
   detection is X11). A tray host is needed for the indicator icon (on GNOME, the
-  *AppIndicator/StatusNotifier* support extension).
+  *AppIndicator/StatusNotifier* support extension), **or**
+- **macOS** (Apple Silicon tested). Dictation needs three one-time permission grants
+  — Input Monitoring, Accessibility, Microphone — which the app guides you through.
 
-## Install
+## Install (Linux)
 
 ```bash
 git clone <your-repo-url> ba-ge
@@ -114,20 +124,54 @@ sudo apt install ./dist/ba-ge_*.deb
 It's ~55 MB (the price of bundling Python + Qt) and depends only on
 `alsa-utils ffmpeg libxcb-cursor0`.
 
+## Install (macOS)
+
+Build a self-contained `.app` (requires a uv-managed Python + Xcode command-line
+tools):
+
+```bash
+uv venv --python 3.12 .venv && uv pip install -r requirements.txt
+./build-macos.sh          # → a signed .app in ~/Applications, and a .dmg via build-dmg.sh
+```
+
+`build-macos.sh` auto-signs with an **Apple Development** certificate if it finds one
+(`security find-identity -v -p codesigning`), enabling the hardened runtime + the
+microphone entitlement so **your permission grants persist across rebuilds**, and
+deploys to `~/Applications/Ba-Ge.app`. Then `./build-dmg.sh` makes a
+drag-to-Applications `.dmg`.
+
+On first launch, grant the three permissions Ba-Ge needs (it opens a guided panel):
+
+<div align="center">
+<img src="docs/screenshot-permissions.png" alt="Ba-Ge macOS permissions panel" width="480">
+</div>
+
+> **Distributing to other Macs** (open without an "unidentified developer" warning)
+> needs a **Developer ID Application** certificate + notarization — `build-dmg.sh`
+> prints the exact `notarytool` steps. An unsigned/ad-hoc build works on your own Mac
+> but resets its grants on every rebuild, which is why signing matters. See
+> [`docs/PORTING.md`](docs/PORTING.md) for the full macOS notes.
+
 ## Usage
 
 ### Dictate
 
-Focus any text field, **hold F9**, speak, **release**. After a short pause
-(transcription runs on release), the text is pasted in. The tray icon shows state:
-grey (idle) → red (recording) → yellow (transcribing).
+Focus any text field, **hold the hotkey** (default `f9` on Linux, `cmd_r` / right ⌘
+on macOS), speak, **release**. After a short pause (transcription runs on release),
+the text is pasted in. The tray icon shows state: grey (idle) → red (recording) →
+yellow (transcribing).
+
+Prefer not to hold a key? Switch **Recording mode → Toggle** in Settings: **tap** the
+hotkey to start, **tap again** to stop.
 
 ### Settings
 
-Right-click the tray icon → **Settings…**, or run `ba-ge --settings`. You
-can set your **API key**, model, language, **custom vocabulary**, **hold-to-talk
-key**, **microphone**, tap threshold, and **autostart on login**.
-Saving applies live to a running app.
+Right-click the tray icon → **Settings…**, or run `ba-ge --settings`. You can set your
+**API key**, model, language, **custom vocabulary**, **hotkey** (type it, pick from
+the list, or click **⌨ Record** and press the key you want), **recording mode**
+(hold / toggle), **microphone**, tap threshold, and **autostart on login**. Saving
+applies live to a running app. On macOS, a **Permissions…** entry (tray + a Settings
+banner) opens the guided grants panel.
 
 The API key can also come from the environment (takes precedence over the file):
 
@@ -166,7 +210,8 @@ recordings transfer quickly.
 
 ## Configuration
 
-`~/.config/ba-ge/config.toml` (created on first run; see
+`~/.config/ba-ge/config.toml` on Linux, `~/Library/Application
+Support/ba-ge/config.toml` on macOS (created on first run; see
 `config.example.toml`):
 
 | Setting | Default | Meaning |
@@ -175,26 +220,28 @@ recordings transfer quickly.
 | `elevenlabs.model_id` | `scribe_v2` | Scribe model |
 | `elevenlabs.language_code` | auto | force a language, e.g. `eng`, `zho` |
 | `elevenlabs.keyterms` | (none) | bias vocabulary, e.g. `["Kubernetes", "小红书"]` (~20% cost) |
-| `hotkey.key` | `f9` | hold-to-talk key (`f9`, `pause`, `ctrl_r`, …) |
-| `audio.device` | `default` | input device (follows the PipeWire default mic) |
+| `hotkey.key` | `f9` | trigger key (`f9`, `space`, `cmd_r`, `ctrl_r`, `caps_lock`, …) |
+| `hotkey.mode` | `hold` | `hold` = push-to-talk · `toggle` = tap on / tap off |
+| `audio.device` | `default` | input device (follows the PipeWire / system default mic) |
 | `audio.min_duration` | `0.3` | ignore taps shorter than this (seconds) |
-| `inject.backend` | `paste` | paste at cursor (X11); atomic + clipboard-preserving |
+| `inject.backend` | `paste` | paste at cursor; atomic + clipboard-preserving |
 
 ## How it works
 
-Recording runs while F9 is held; transcription happens on release (batch), so
-expect a ~0.5–2 s pause before the text appears.
+Recording runs while the hotkey is held (or between taps in toggle mode);
+transcription happens when it stops (batch), so expect a ~0.5–2 s pause before the
+text appears.
 
 | Module | Role |
 |---|---|
-| `app.py` | state machine + threading wiring |
-| `platform.py` | per-OS backend factory (the only place with `sys.platform`) |
+| `app.py` | state machine + threading wiring (hold / toggle logic) |
+| `platform.py` | per-OS backend factory (the only place with `sys.platform`); macOS Qt-plugin + TCC-permission helpers |
 | `hotkey.py` / `debounce.py` | global hotkey press/release (pynput) |
 | `audio.py` / `audio_sd.py` | mic capture — `arecord` (Linux) / `sounddevice` (mac/win) |
 | `transcribe.py` | audio → text / diarized via ElevenLabs Scribe (stdlib HTTP) |
 | `filejob.py` | file → `ffmpeg` → Scribe (diarized) → speaker/timestamp text |
 | `inject.py` · `clipboard.py` / `inject_pynput.py` | paste at cursor — Qt clipboard + **uinput** keystroke (Linux, X11) / clipboard-paste (mac/win) |
-| `ui.py` · `theme.py` · `ui_settings.py` · `ui_files.py` · `ui_clipboard.py` | **PySide6 (Qt)** tray + windows (settings, transcribe, clipboard history) |
+| `ui.py` · `theme.py` · `ui_settings.py` · `ui_files.py` · `ui_clipboard.py` · `ui_permissions.py` | **PySide6 (Qt)** tray + windows (settings, transcribe, clipboard history, macOS permissions) |
 | `config.py` · `paths.py` · `notify.py` · `singleton.py` · `autostart.py` | config, paths, notifications, single-instance, autostart |
 
 **Design note:** the whole UI (tray + windows) is Qt. Qt's wheels are
@@ -220,16 +267,36 @@ GNOME tray. All threads marshal UI work onto the Qt main thread via a signal bri
   X11) to refresh GNOME Shell's icon cache.
 - **No tray icon on GNOME** — enable the *AppIndicator / StatusNotifier* support
   extension.
-- **Hotkey conflicts with another app** — change it in **Settings → Hold-to-talk
-  key**.
+- **Hotkey conflicts with another app** — change it in **Settings → Hotkey** (or click
+  **⌨ Record** and press a different key).
+
+### macOS
+
+- **Holding the hotkey does nothing** — the global hotkey needs **Input Monitoring**
+  *and* **Accessibility** (System Settings → Privacy & Security). Open tray →
+  **Permissions…** for a guided panel with live status. After granting either, Ba-Ge
+  must be **relaunched**.
+- **Records silence / no Microphone entry** — grant **Microphone**. It only appears in
+  the list once the app has requested it (the Permissions panel's *Grant* button does
+  this).
+- **Grants keep resetting after each build** — an unsigned/ad-hoc `.app` gets a new
+  identity every rebuild. `build-macos.sh` signs with a stable **Apple Development**
+  cert so grants stick; run the copy in **`~/Applications`**, not `dist/`. A rebuild
+  still needs one quick **off→on** toggle unless the app is notarized.
+- **Typing a space starts a recording** — you set `space` as a *hold* hotkey; a normal
+  typing key can't be a clean push-to-talk key. Use `cmd_r` (right ⌘), `caps_lock`, or
+  an F-key, or switch to **toggle** mode.
 
 ## Development
 
 ```bash
-# run from source (uses the .venv install.sh created)
+# set up the venv (install.sh does this on Linux; on macOS run it directly)
+uv venv --python 3.12 .venv && uv pip install -r requirements.txt
+
+# run from source
 .venv/bin/python -m ba_ge
 
-# tests
+# tests (81, must stay green)
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
