@@ -81,6 +81,24 @@ class DictationApp:
     # ---- hotkey callbacks (run on the pynput listener thread) ----
 
     def on_press(self) -> None:
+        # In toggle mode the hotkey's leading edge flips recording on/off; the
+        # trailing edge (on_release) is ignored. In hold mode press starts.
+        if self.config.hotkey_mode == "toggle":
+            with self._lock:
+                recording = self._state is State.RECORDING
+            if recording:
+                self._end_recording()
+            else:
+                self._begin_recording()
+            return
+        self._begin_recording()
+
+    def on_release(self) -> None:
+        if self.config.hotkey_mode == "toggle":
+            return  # a tap-release must not stop a toggle recording
+        self._end_recording()
+
+    def _begin_recording(self) -> None:
         with self._lock:
             if self._state is not State.IDLE:
                 return
@@ -107,7 +125,7 @@ class DictationApp:
             return
         self._indicate(State.RECORDING)
 
-    def on_release(self) -> None:
+    def _end_recording(self) -> None:
         with self._lock:
             if self._state is not State.RECORDING:
                 return
@@ -197,7 +215,8 @@ class DictationApp:
     def run(self) -> None:
         self.indicator = make_indicator(
             self._request_quit, self._open_settings, self._open_transcribe,
-            hotkey_name=self.config.hotkey.upper())
+            hotkey_name=self.config.hotkey.upper(),
+            on_permissions=self._open_permissions)
         self._bind_clipboard()
         if platform.IS_LINUX:
             from .inject import ensure_device  # pre-create the uinput paste device
@@ -209,8 +228,10 @@ class DictationApp:
         if missing:
             self.notifier(
                 "Ba-Ge — permission needed",
-                f"Grant {', '.join(missing)} and Input Monitoring in System Settings "
-                "› Privacy & Security, then relaunch.", urgency="critical")
+                f"Grant {', '.join(missing)} in System Settings › Privacy & Security, "
+                "then relaunch.", urgency="critical")
+            # A guided panel beats a one-shot notification: live status + fix buttons.
+            self.indicator.run_on_ui(self._open_permissions)
 
         if self.config.model_id in DEPRECATED_MODELS:
             log.warning('model_id %r is deprecated; set model_id = "scribe_v2" in %s',
@@ -241,6 +262,12 @@ class DictationApp:
         # Called on the tk thread (the runtime marshals menu clicks there).
         from .ui_settings import open_settings
         open_settings(self.indicator.root, on_saved=self.reload_config)
+
+    def _open_permissions(self) -> None:
+        # macOS TCC helper window (no-op elsewhere). On the Qt main thread.
+        # on_restart=None → the window relaunches the .app bundle itself.
+        from .ui_permissions import open_permissions_window
+        open_permissions_window()
 
     def _open_transcribe(self) -> None:
         from .ui_files import choose_and_transcribe
@@ -342,9 +369,29 @@ def _type_test(rest) -> None:
     sys.stderr.write("[type-test] done. Compare typed output with EXPECTED above.\n")
 
 
+def _add_file_log() -> None:
+    """Mirror logs to a rotating file so the (console-less) packaged app is
+    diagnosable — on macOS/Windows stderr is /dev/null, so failures are otherwise
+    silent. Best-effort: never let logging setup break startup."""
+    try:
+        from logging.handlers import RotatingFileHandler
+        log_path = paths.cache_dir() / "ba-ge.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = RotatingFileHandler(log_path, maxBytes=512 * 1024, backupCount=2)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root = logging.getLogger()
+        if not any(isinstance(h, RotatingFileHandler) for h in root.handlers):
+            root.addHandler(fh)
+        log.info("log file: %s", log_path)
+    except Exception:
+        log.debug("could not set up file logging", exc_info=True)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _add_file_log()  # packaged app has no console (stderr -> /dev/null); keep a log
     args = sys.argv[1:]
 
     if args and args[0] == "--transcribe":

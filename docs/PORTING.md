@@ -104,6 +104,20 @@ survives >60s idle.
   Microphone <id>`; deny → app detects silence + helpful error (not empty
   transcript); grant → works; works when double-clicked from Finder.
 - **Tray/tkinter main-thread conflict** — see THE #1 RISK above.
+- **Qt plugin dirs ship `UF_HIDDEN` (FIXED in code, verified 6.8.1 + 6.11.1,
+  arm64)** — PySide6's macOS wheel sets the `UF_HIDDEN` BSD file flag on its plugin
+  directories AND the plugin dylibs (`Qt/plugins/platforms/libqcocoa.dylib`, etc.).
+  Qt enumerates plugin dirs with `getattrlistbulk`, which **skips hidden entries**,
+  so `QDir::entryList` returns empty, the factory finds no `cocoa` platform plugin,
+  and the app aborts at startup: `Could not find the Qt platform plugin "cocoa" in
+  ""` — even though the dylib loads fine via `QPluginLoader`/`dlopen` by explicit
+  path, and `os.listdir` (POSIX readdir) sees the files. Nothing to do with TCC /
+  `~/Documents` (verified: clearing the flag makes it work in place, under
+  Documents). *Fix (shipped):* `platform.ensure_qt_plugins()` clears `UF_HIDDEN`
+  recursively on the plugin tree before the first `QApplication`; no-op when already
+  visible (e.g. a PyInstaller bundle that copied the files un-hidden) and best-effort
+  on read-only installs. *TEST:* `find .venv/.../PySide6/Qt/plugins -exec chflags
+  hidden {} \;` then launch → must still start.
 
 ### 🟠 High
 - **Code-signing / TCC identity across rebuilds** — grants bind to the code
@@ -251,6 +265,12 @@ survives >60s idle.
 ## On-hardware testing checklist (hand to the Mac/Windows tester)
 
 ### macOS
+0. **Build:** `./build-macos.sh` → `dist/Ba-Ge.app`. If the checkout is in an
+   iCloud-synced folder (~/Documents, ~/Desktop) with "Optimize Mac Storage" on,
+   build from a copy in a non-synced dir (e.g. `/tmp`) — iCloud re-evicts the Qt
+   files mid-build and PyInstaller fails (Errno 60 / truncated Mach-O). *Verified:*
+   `.app` builds (187 MB, trimmed) and launches (event loop + tray up) on arm64,
+   macOS 26 — from a `/tmp` build tree.
 1. Fresh Mac, **no permissions**: launch → F9 does nothing → app shows a dialog
    naming the missing permission (Input Monitoring) and deep-links to it.
 2. Grant **Input Monitoring only** → hotkey fires but typing produces nothing (app

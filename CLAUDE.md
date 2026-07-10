@@ -18,7 +18,7 @@ with a custom-vocabulary (`keyterms`) dictionary.
     clipboard SelectionRequest and the paste reads empty; (2) emit each key as its own
     synced event with ~20ms settle, or the chord races and V passes through as CSI-u.
     pynput/XTEST remains the fallback (works in GUI apps, not GTK terminals).
-- **Cross-platform port: code complete on Linux; macOS/Windows UNVERIFIED.**
+- **Cross-platform port: Linux + macOS run on hardware; Windows UNVERIFIED.**
   - ✅ `platform.py` factory (the only `sys.platform` in core) — `make_recorder`,
     `make_injector`, `list_input_devices`, `ffmpeg_exe`, `missing_permissions`.
   - ✅ `paths.py` (platformdirs), `singleton.py`, `notify.py`, `autostart.py` — all
@@ -35,11 +35,38 @@ with a custom-vocabulary (`keyterms`) dictionary.
   - ✅ inject: `inject.py` + `clipboard.py` (paste at cursor, Linux X11 — the Qt
     clipboard manager preserves the board + keeps a history stack; the keystroke is
     sent via **uinput/evdev**, XTEST/pynput fallback) + `inject_pynput.py` (mac/win).
-  - ✅ **Linux verified end-to-end** (runs on the new stack, 74 tests green).
-  - ⬜ **macOS/Windows on-hardware testing** — the whole point of the
-    `docs/PORTING.md` per-platform checklists. NOTHING mac/win is verified.
-  - ⬜ Packaging: `build-macos.sh` / `build-windows.ps1` are UNVERIFIED starting
-    points (run on the target OS; signing/plist/AUMID details in PORTING.md).
+  - ✅ **Linux verified end-to-end** (runs on the new stack, 78 tests green).
+  - ✅ **macOS (arm64) brought up on hardware** — 78 tests green, app launches, Qt
+    event loop + `QSystemTrayIcon` come up, sd/pynput backends construct, mic
+    enumerates, TCC `Accessibility` is detected. Fixed on macOS along the way:
+    (1) `hotkey.py` referenced `Key.pause`/`scroll_lock`/`menu`/`insert` that
+    pynput's darwin backend doesn't define → crash at import; now built defensively
+    via `getattr`. (2) `singleton.py` POSIX `flock` backend ignored `name` and
+    couldn't fail a same-process re-acquire → tracks held names + per-name lock file.
+    (3) **`platform.ensure_qt_plugins()`** clears the `UF_HIDDEN` flag PySide6's
+    macOS wheel puts on its Qt plugin dirs/dylibs (Qt's `getattrlistbulk`
+    enumeration skips hidden entries → "Could not find the Qt platform plugin cocoa
+    in ''"; see `docs/PORTING.md`). Called before every `QApplication`.
+    (4) **`platform.prewarm_macos_input_source()`** — Settings **Save** crashed the
+    app (SIGTRAP): pynput's `Listener._run()` (background thread) calls the
+    main-thread-only Text Input Source API (`TISCopyCurrentKeyboardInputSource`),
+    which macOS 14+ aborts off-main once a window is shown, so restarting the
+    listener mid-event-loop died. Now the keyboard-layout context is cached once on
+    the main thread (from `HotkeyListener.start()`) and pynput's `keycode_context`
+    is rebound to reuse it; the listener thread never touches TIS.
+  - ⬜ **macOS dictation flow still needs manual TCC grants to fully verify** — the
+    hold-to-talk path (pynput logs "process is not trusted"), mic capture, and
+    paste all require Input Monitoring + Accessibility + Microphone grants (a human
+    action); code path is wired but the end-to-end dictation wasn't exercised here.
+  - ⬜ **Windows on-hardware testing** — NOTHING win is verified.
+  - ✅ Packaging (macOS): `build-macos.sh` rewritten to the PySide6 stack
+    (PyInstaller onedir `.app`, QML/Quick/Designer trimmed, `NSMicrophoneUsageDescription`
+    + `LSUIElement`) and **verified: builds `dist/Ba-Ge.app` (187 MB, ad-hoc
+    signed) that launches with tray + event loop on arm64**. Unsigned/un-notarized
+    (needs a Developer ID cert). ⚠️ Must be built from a NON-iCloud path — iCloud
+    "Optimize Mac Storage" evicts the Qt tree mid-build (Errno 60 / truncated
+    Mach-O); build from a `/tmp` copy (see `build-macos.sh` header + PORTING.md).
+  - ⬜ Packaging (Windows): `build-windows.ps1` UNVERIFIED (signing/AUMID in PORTING.md).
   - Possible follow-ups from PORTING.md: rumps for the macOS tray (pystray #138),
     Windows AUMID toast registration.
 

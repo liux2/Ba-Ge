@@ -116,6 +116,7 @@ class Config:
     model_id: str = "scribe_v2"
     language: str | None = None
     hotkey: str = "f9"
+    hotkey_mode: str = "hold"  # "hold" (push-to-talk) or "toggle" (tap on / tap off)
     min_duration: float = 0.3
     sample_rate: int = 16000
     channels: int = 1
@@ -165,6 +166,8 @@ def _apply_toml(cfg: Config, data: dict) -> None:
     hk = data.get("hotkey", {})
     if "key" in hk:
         cfg.hotkey = str(hk["key"])
+    if str(hk.get("mode", "")).lower() in ("hold", "toggle"):
+        cfg.hotkey_mode = str(hk["mode"]).lower()
 
     au = data.get("audio", {})
     if "device" in au:
@@ -242,7 +245,8 @@ def dump_toml(cfg: Config) -> str:
         f"{lang}\n"
         f"{keyterms}\n\n"
         "[hotkey]\n"
-        f"key = {_toml_str(cfg.hotkey)}\n\n"
+        f"key = {_toml_str(cfg.hotkey)}\n"
+        f"mode = {_toml_str(cfg.hotkey_mode)}   # hold = push-to-talk · toggle = tap on / tap off\n\n"
         "[audio]\n"
         f"device = {_toml_str(cfg.audio_device)}\n"
         f"sample_rate = {cfg.sample_rate}\n"
