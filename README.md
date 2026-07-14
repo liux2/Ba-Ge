@@ -240,7 +240,7 @@ text appears.
 | `audio.py` / `audio_sd.py` | mic capture — `arecord` (Linux) / `sounddevice` (mac/win) |
 | `transcribe.py` | audio → text / diarized via ElevenLabs Scribe (stdlib HTTP) |
 | `filejob.py` | file → `ffmpeg` → Scribe (diarized) → speaker/timestamp text |
-| `inject.py` · `clipboard.py` / `inject_pynput.py` | paste at cursor — Qt clipboard + **uinput** keystroke (Linux, X11) / clipboard-paste (mac/win) |
+| `inject.py` · `clipboard.py` / `inject_pynput.py` | insert at cursor — **type** in terminals, **paste** (Qt clipboard + uinput) in GUI apps / CJK (Linux, X11); clipboard-paste (mac/win) |
 | `ui.py` · `theme.py` · `ui_settings.py` · `ui_files.py` · `ui_clipboard.py` · `ui_permissions.py` | **PySide6 (Qt)** tray + windows (settings, transcribe, clipboard history, macOS permissions) |
 | `config.py` · `paths.py` · `notify.py` · `singleton.py` · `autostart.py` | config, paths, notifications, single-instance, autostart |
 
@@ -251,16 +251,15 @@ GNOME tray. All threads marshal UI work onto the Qt main thread via a signal bri
 
 ## Troubleshooting
 
-- **Nothing pastes at the cursor** — the paste keystroke is injected via `uinput`,
-  so `/dev/uinput` must be writable. `install.sh`/the `.deb` add a udev `uaccess`
-  rule (no `input` group, no re-login); verify with `ls -l /dev/uinput` (should show
-  a trailing `+` ACL) and a fresh login/udev-trigger. In terminals Ba-Ge auto-sends
-  **Ctrl+Shift+V** (real device events, so GTK terminals like Ghostty honour it —
-  synthetic X events do not). If uinput is unreachable it falls back to XTEST, which
-  works in GUI apps but **not** GTK terminals.
-- **Transcript went to the wrong shortcut** — Ba-Ge picks Ctrl+Shift+V for terminals
-  and Ctrl+V elsewhere by window class; an app that pastes with a non-standard key
-  may not receive it.
+- **Nothing appears at the cursor** — injection uses `uinput`, so `/dev/uinput`
+  must be writable. `install.sh`/the `.deb` add a udev `uaccess` rule (no `input`
+  group, no re-login); verify with `ls -l /dev/uinput` (a trailing `+` ACL) after a
+  fresh login/udev-trigger. In **terminals** Ba-Ge **types** the text (character
+  events reach the shell reliably — GTK terminals like Ghostty flakily ignore the
+  paste keybind, so typing avoids that). In **GUI apps** it **pastes** (Ctrl+V) from
+  the clipboard; **non-Latin text (中文, emoji) is always pasted** since it can't be
+  typed as keys — so pasting must work there (a clipboard manager helps if an app
+  like Chrome caches its clipboard).
 - **Silent recording / empty transcript** — the mic is muted or the wrong device is
   selected; the app warns you. Pick the right mic in **Settings → Microphone**.
 - **No app logo after install** — log out and back in once (or `Alt+F2` → `r` on

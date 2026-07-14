@@ -10,14 +10,16 @@ with a custom-vocabulary (`keyterms`) dictionary.
   injection (X11; Qt clipboard manager preserves the board + keeps history, and the
   Ctrl+(Shift+)V keystroke is sent via **uinput** — see the note below) · Qt tray +
   settings/transcript windows · ElevenLabs Scribe.
-  - **Injection note (hard-won):** GTK terminals (Ghostty) ignore synthetic X
-    (XTEST/pynput) events for paste *keybinds* — they only fire for real-device
-    (uinput) events. So the paste key goes through `evdev` uinput (`/dev/uinput` via
-    a udev `uaccess` ACL — no `input` group / re-login). Two subtleties: (1) send the
-    keystroke OFF the Qt main thread, or the event loop can't serve the target's
-    clipboard SelectionRequest and the paste reads empty; (2) emit each key as its own
-    synced event with ~20ms settle, or the chord races and V passes through as CSI-u.
-    pynput/XTEST remains the fallback (works in GUI apps, not GTK terminals).
+  - **Injection note (hard-won):** split by target in `inject.py::type_text`.
+    GTK terminals (Ghostty) intermittently **encode even a real-device (uinput)
+    Ctrl+Shift+V as a CSI-u key** instead of firing the paste keybind — the modifiers
+    ARE present (mod code 6), so no key-timing trick fixes it; it's Ghostty's call.
+    So **terminals are TYPED** (`_type_via_uinput`: uinput char events reach the PTY
+    normally — reliable + clipboard-free) for ASCII-mappable text; **GUI apps and
+    non-typeable text (CJK — Scribe is bilingual!) are PASTED** (Qt clipboard + uinput
+    Ctrl+V, sent OFF the Qt main thread so the loop can serve the SelectionRequest).
+    uinput via `evdev` (`/dev/uinput`, udev `uaccess` ACL — no `input` group/re-login).
+    pynput/XTEST is the last-resort fallback (GUI only).
 - **Cross-platform port: Linux + macOS run on hardware; Windows UNVERIFIED.**
   - ✅ `platform.py` factory (the only `sys.platform` in core) — `make_recorder`,
     `make_injector`, `list_input_devices`, `ffmpeg_exe`, `missing_permissions`.

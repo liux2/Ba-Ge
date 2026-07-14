@@ -14,14 +14,30 @@ class FakeClipboard:
         self.calls.append((text, send_key))
 
 
+def _patch(testcase, **attrs):
+    """Patch module-level ba_ge.inject attributes for the duration of a test.
+
+    IMPORTANT: tests must never invoke the real detection/typing, or they would
+    inject keystrokes into the live session. We force detection + typing to fakes.
+    """
+    import ba_ge.inject as mod
+    for name, value in attrs.items():
+        orig = getattr(mod, name)
+        setattr(mod, name, value)
+        testcase.addCleanup(lambda n=name, o=orig: setattr(mod, n, o))
+
+
 class ResolveBackendTest(unittest.TestCase):
     def test_always_paste(self):
-        # xdotool and ydotool are retired; paste is the single Linux backend.
         for pref in ("paste", "auto", "xdotool", "ydotool", ""):
             self.assertEqual(resolve_backend(pref), "paste")
 
 
 class InjectorTest(unittest.TestCase):
+    def setUp(self):
+        # Non-terminal by default → the (faked) paste path, never real typing.
+        _patch(self, _active_window_class=lambda: "")
+
     def _inj(self, clip=None):
         return Injector(Config(), clipboard=clip)
 
@@ -39,34 +55,59 @@ class InjectorTest(unittest.TestCase):
         self._inj(clip).type_text("hello world with spaces")
         self.assertEqual(len(clip.calls), 1)
         text, send_key = clip.calls[0]
-        self.assertEqual(text, "hello world with spaces")  # verbatim, atomic
-        self.assertTrue(callable(send_key))                # deferred keystroke
+        self.assertEqual(text, "hello world with spaces")
+        self.assertTrue(callable(send_key))
 
     def test_bind_clipboard(self):
-        inj = Injector(Config())  # no clipboard yet
+        inj = Injector(Config())
         clip = FakeClipboard()
         inj.bind_clipboard(clip)
         inj.type_text("x")
         self.assertEqual(clip.calls[0][0], "x")
 
 
-class TerminalDetectionTest(unittest.TestCase):
-    def _patch_class(self, value):
-        import ba_ge.inject as mod
-        orig = mod._active_window_class
-        mod._active_window_class = lambda: value
-        self.addCleanup(lambda: setattr(mod, "_active_window_class", orig))
+class RoutingTest(unittest.TestCase):
+    """type_text: terminal+ASCII → type; terminal+CJK → paste; GUI → paste."""
 
+    def _setup(self, window_class):
+        self.typed = []
+        _patch(self,
+               _active_window_class=lambda: window_class,
+               _type_via_uinput=lambda text: (self.typed.append(text) or True))
+
+    def test_terminal_ascii_is_typed_not_pasted(self):
+        self._setup("ghostty com.mitchellh.ghostty")
+        clip = FakeClipboard()
+        Injector(Config(), clipboard=clip).type_text("hello, world 123")
+        self.assertEqual(self.typed, ["hello, world 123"])
+        self.assertEqual(clip.calls, [])  # did NOT touch the clipboard
+
+    def test_terminal_cjk_is_pasted(self):
+        self._setup("ghostty com.mitchellh.ghostty")
+        clip = FakeClipboard()
+        Injector(Config(), clipboard=clip).type_text("你好 world")
+        self.assertEqual(self.typed, [])                 # can't type CJK
+        self.assertEqual(clip.calls[0][0], "你好 world")   # pasted instead
+
+    def test_gui_app_is_pasted(self):
+        self._setup("google-chrome Google-chrome")
+        clip = FakeClipboard()
+        Injector(Config(), clipboard=clip).type_text("hello")
+        self.assertEqual(self.typed, [])                 # not a terminal
+        self.assertEqual(clip.calls[0][0], "hello")
+
+
+class TerminalDetectionTest(unittest.TestCase):
     def test_terminal_window_is_detected(self):
-        self._patch_class("ghostty com.mitchellh.ghostty")
+        _patch(self, _active_window_class=lambda: "ghostty com.mitchellh.ghostty")
         self.assertTrue(Injector(Config())._active_is_terminal())
 
     def test_gui_window_is_not_terminal(self):
-        self._patch_class("google-chrome Google-chrome")
+        _patch(self, _active_window_class=lambda: "google-chrome Google-chrome")
         self.assertFalse(Injector(Config())._active_is_terminal())
 
     def test_unknown_window_is_not_terminal(self):
-        self._patch_class("")  # detection failed / no X
+        _patch(self, _active_window_class=lambda: "")
         self.assertFalse(Injector(Config())._active_is_terminal())
 
 
