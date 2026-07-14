@@ -232,15 +232,12 @@ class Injector:
     def type_text(self, text: str) -> None:
         if not text:
             return
-        terminal = self._active_is_terminal()
-        # Terminals: the Ctrl+Shift+V paste keybind is unreliable in GTK terminals
-        # (Ghostty intermittently ENCODES it as a key instead of pasting). Type the
-        # text instead — characters reach the PTY normally, so it's reliable. CJK /
-        # other non-typeable text and all GUI apps fall through to (fast, atomic) paste.
-        if terminal and _can_type(text) and _type_via_uinput(text):
-            return
+        # Always paste (fast, atomic, no dropped characters). Typing is retired as a
+        # default — it drops spaces at speed and is slow when made reliable. The
+        # remaining task is making the terminal paste keybind land every time.
         if self._clipboard is None:
             raise InjectionError("clipboard manager unavailable — cannot paste")
+        terminal = self._active_is_terminal()
         self._clipboard.paste_text(text, lambda: self._send_paste_key(terminal))
 
     # ---- helpers ----
