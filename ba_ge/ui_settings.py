@@ -18,8 +18,8 @@ from .config import (
 log = logging.getLogger("bage.ui.settings")
 
 _MODELS = ["scribe_v2", "scribe_v1"]
-_HOTKEYS = ["f9", "f8", "f10", "f7", "space", "cmd_r", "ctrl_r", "caps_lock",
-            "pause", "scroll_lock"]
+_HOTKEYS = ["f9", "ctrl_r", "alt_r", "cmd_r", "menu", "caps_lock", "space",
+            "pause", "scroll_lock", "f8", "f10", "f7"]
 
 _current: dict = {"win": None}
 
@@ -29,6 +29,13 @@ _MAC_VK = {
     54: "cmd_r", 55: "cmd_l", 56: "shift_l", 60: "shift_r", 58: "alt_l",
     61: "alt_r", 59: "ctrl_l", 62: "ctrl_r", 57: "caps_lock", 63: "",  # fn: unusable
     49: "space", 48: "tab", 53: "esc",
+}
+
+# X11 keycodes (Qt's nativeScanCode on X11) for modifier keys — Qt reports
+# Shift/Ctrl/Alt/Meta without a side, so the scancode distinguishes left/right.
+_X11_MOD_SCANCODE = {
+    50: "shift_l", 62: "shift_r", 37: "ctrl_l", 105: "ctrl_r",
+    64: "alt_l", 108: "alt_r", 133: "cmd_l", 134: "cmd_r", 135: "menu",
 }
 
 
@@ -45,6 +52,17 @@ def _qt_event_to_hotkey_name(event):
         if name:
             return name
     key = event.key()
+    if key in (Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta):
+        # Modifier key — resolve left/right via scancode (Right Ctrl / Right Alt are
+        # good push-to-talk keys; Shift/left-modifiers false-trigger while typing).
+        name = _X11_MOD_SCANCODE.get(event.nativeScanCode()) or {
+            Qt.Key_Shift: "shift", Qt.Key_Control: "ctrl",
+            Qt.Key_Alt: "alt", Qt.Key_Meta: "cmd"}.get(key)
+        try:
+            hotkey.resolve_key(name)
+            return name
+        except Exception:
+            return None
     if Qt.Key_F1 <= key <= Qt.Key_F35:
         name = f"f{key - Qt.Key_F1 + 1}"
     else:
