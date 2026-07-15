@@ -66,38 +66,6 @@ class InjectorTest(unittest.TestCase):
         self.assertEqual(clip.calls[0][0], "x")
 
 
-class RoutingTest(unittest.TestCase):
-    """type_text: terminal+ASCII → type; terminal+CJK → paste; GUI → paste.
-    (_type_via_uinput is patched so tests never inject into the live session.)"""
-
-    def _setup(self, window_class):
-        self.typed = []
-        _patch(self,
-               _active_window_class=lambda: window_class,
-               _type_via_uinput=lambda text: (self.typed.append(text) or True))
-
-    def test_terminal_ascii_is_typed(self):
-        self._setup("ghostty com.mitchellh.ghostty")
-        clip = FakeClipboard()
-        Injector(Config(), clipboard=clip).type_text("hello, world 123")
-        self.assertEqual(self.typed, ["hello, world 123"])
-        self.assertEqual(clip.calls, [])                 # did NOT paste
-
-    def test_terminal_cjk_is_pasted(self):
-        self._setup("ghostty com.mitchellh.ghostty")
-        clip = FakeClipboard()
-        Injector(Config(), clipboard=clip).type_text("你好 world")
-        self.assertEqual(self.typed, [])                 # can't type CJK
-        self.assertEqual(clip.calls[0][0], "你好 world")   # pasted instead
-
-    def test_gui_app_is_pasted(self):
-        self._setup("google-chrome Google-chrome")
-        clip = FakeClipboard()
-        Injector(Config(), clipboard=clip).type_text("hello")
-        self.assertEqual(self.typed, [])                 # not a terminal
-        self.assertEqual(clip.calls[0][0], "hello")
-
-
 class TerminalDetectionTest(unittest.TestCase):
     def test_terminal_window_is_detected(self):
         _patch(self, _active_window_class=lambda: "ghostty com.mitchellh.ghostty")

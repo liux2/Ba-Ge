@@ -25,11 +25,9 @@ _TERMINAL_HINTS = ("terminal", "konsole", "xterm", "alacritty", "kitty",
                    "urxvt", "termite", "sakura", "roxterm", "contour", "wave")
 
 _REGISTER_DELAY = 0.4   # one-time: let the compositor notice the new uinput device
-_KEY_HOLD = 0.02        # hold V briefly so the keypress registers
-_MASK_SHIFT = 1         # X11 modifier bits (from query_pointer().mask)
-_MASK_CTRL = 4
-_MOD_POLL_TIMEOUT = 0.4 # max wait for the modifier chord to actually register before V
-_TYPE_GAP = 0.010       # per-character gap when typing terminals (reliability > speed)
+_MOD_SETTLE = 0.022     # settle each modifier before the next key — the fixed timing
+_KEY_HOLD = 0.022       # that worked reliably before the (reverted) modifier-poll
+_TYPE_GAP = 0.010       # per-character gap for the dormant typing fallback
 
 
 class InjectionError(Exception):
@@ -126,52 +124,30 @@ def close_device() -> None:
         _uinput_dev = None
 
 
-def _wait_mods(want_bits: int, timeout: float = _MOD_POLL_TIMEOUT) -> bool:
-    """Poll the X server until the Ctrl/Shift modifier state equals want_bits.
-
-    Deterministic replacement for a fixed sleep: uinput modifier events take a
-    variable moment to land in the input state (worse under load), and pressing V
-    before they register makes GTK terminals miss the paste keybind (V leaks through
-    as a CSI-u key sequence). We wait until the server actually reports the chord.
-    """
-    try:
-        from Xlib import display
-        d = display.Display()
-        try:
-            root = d.screen().root
-            end = time.monotonic() + timeout
-            while time.monotonic() < end:
-                if (root.query_pointer().mask & (_MASK_CTRL | _MASK_SHIFT)) == want_bits:
-                    return True
-                time.sleep(0.004)
-        finally:
-            d.close()
-    except Exception:
-        time.sleep(0.03)  # fallback if X can't be queried
-    return False
-
-
 def _send_via_uinput(terminal: bool) -> bool:
     from evdev import ecodes as e
     dev = _get_uinput()
     if dev is None:
         return False
+    # Each key its own synced event with a FIXED settle between them (like real
+    # hardware). This is the timing that worked reliably; the later "poll the server
+    # then press V immediately" variant regressed it, so it's gone.
     mods = [e.KEY_LEFTCTRL, e.KEY_LEFTSHIFT] if terminal else [e.KEY_LEFTCTRL]
-    want = _MASK_CTRL | (_MASK_SHIFT if terminal else 0)
 
     def ev(code, value):
         dev.write(e.EV_KEY, code, value)
         dev.syn()
 
-    for m in mods:        # press Ctrl (, Shift)
+    for m in mods:               # press Ctrl (, Shift), settling each
         ev(m, 1)
-    _wait_mods(want)      # block until the server confirms the chord is held
-    ev(e.KEY_V, 1)        # V — modifiers are now guaranteed active
+        time.sleep(_MOD_SETTLE)
+    ev(e.KEY_V, 1)               # V with the chord held
     time.sleep(_KEY_HOLD)
     ev(e.KEY_V, 0)
-    for m in reversed(mods):  # release Shift, then Ctrl
+    time.sleep(_MOD_SETTLE)
+    for m in reversed(mods):     # release Shift, then Ctrl
         ev(m, 0)
-    _wait_mods(0)         # ensure nothing is left stuck (would corrupt later input)
+        time.sleep(0.008)
     return True
 
 
@@ -232,14 +208,12 @@ class Injector:
     def type_text(self, text: str) -> None:
         if not text:
             return
-        terminal = self._active_is_terminal()
-        # Terminals: TYPE the text — characters reach the PTY reliably, whereas the
-        # Ctrl+Shift+V paste keybind is flaky in GTK terminals (Ghostty). GUI apps
-        # and non-typeable text (CJK — Scribe is bilingual) PASTE (fast, atomic).
-        if terminal and _can_type(text) and _type_via_uinput(text):
-            return
+        # Paste everywhere (fast, atomic, no dropped characters) with the fixed chord
+        # timing that landed reliably. Terminal detection only selects the shortcut
+        # (Ctrl+Shift+V in terminals vs Ctrl+V elsewhere).
         if self._clipboard is None:
             raise InjectionError("clipboard manager unavailable — cannot paste")
+        terminal = self._active_is_terminal()
         self._clipboard.paste_text(text, lambda: self._send_paste_key(terminal))
 
     # ---- helpers ----
