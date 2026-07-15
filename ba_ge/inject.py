@@ -29,7 +29,7 @@ _KEY_HOLD = 0.02        # hold V briefly so the keypress registers
 _MASK_SHIFT = 1         # X11 modifier bits (from query_pointer().mask)
 _MASK_CTRL = 4
 _MOD_POLL_TIMEOUT = 0.4 # max wait for the modifier chord to actually register before V
-_TYPE_GAP = 0.003       # per-character gap when typing into terminals
+_TYPE_GAP = 0.010       # per-character gap when typing terminals (reliability > speed)
 
 
 class InjectionError(Exception):
@@ -232,12 +232,14 @@ class Injector:
     def type_text(self, text: str) -> None:
         if not text:
             return
-        # Always paste (fast, atomic, no dropped characters). Typing is retired as a
-        # default — it drops spaces at speed and is slow when made reliable. The
-        # remaining task is making the terminal paste keybind land every time.
+        terminal = self._active_is_terminal()
+        # Terminals: TYPE the text — characters reach the PTY reliably, whereas the
+        # Ctrl+Shift+V paste keybind is flaky in GTK terminals (Ghostty). GUI apps
+        # and non-typeable text (CJK — Scribe is bilingual) PASTE (fast, atomic).
+        if terminal and _can_type(text) and _type_via_uinput(text):
+            return
         if self._clipboard is None:
             raise InjectionError("clipboard manager unavailable — cannot paste")
-        terminal = self._active_is_terminal()
         self._clipboard.paste_text(text, lambda: self._send_paste_key(terminal))
 
     # ---- helpers ----

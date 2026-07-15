@@ -21,8 +21,8 @@ from .inject import InjectionError
 
 log = logging.getLogger("bage.clipboard")
 
-_RESTORE_MS = 1200  # give slow / cross-process targets time to read before restoring
-_PASTE_TIMEOUT = 8  # worker-thread guard so a wedged main loop can't hang dictation
+_RESTORE_MS = 1200   # give slow / cross-process targets time to read before restoring
+_PASTE_TIMEOUT = 8   # worker-thread guard so a wedged main loop can't hang dictation
 
 
 class ClipboardManager(QObject):
@@ -74,11 +74,9 @@ class ClipboardManager(QObject):
     def paste_text(self, text: str, send_key) -> None:
         """Set the clipboard to `text`, fire `send_key()`, then restore.
 
-        Called from a worker thread. The clipboard *write* is marshalled onto the
-        main thread, but `send_key()` runs HERE (the worker) on purpose: while a Qt
-        slot executes, the event loop can't answer the target's SelectionRequest, so
-        a cross-process paste (a terminal) would read a stale/empty clipboard. Firing
-        the keystroke off the main thread keeps the loop free to serve the paste.
+        Called from a worker thread. The clipboard write is marshalled to the main
+        thread, but `send_key()` runs HERE so the Qt loop stays free to serve the
+        target's read (a cross-process paste would otherwise read stale/empty).
         """
         done = threading.Event()
         box: dict = {}
