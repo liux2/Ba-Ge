@@ -201,6 +201,7 @@ class Injector:
         # clipboard is a ClipboardManager (Qt, main thread); app.py wires it in.
         self._clipboard = clipboard
         self.backend = "paste"
+        self._terminal_mode = getattr(config, "inject_terminal_mode", "paste")
 
     def bind_clipboard(self, clipboard) -> None:
         self._clipboard = clipboard
@@ -208,12 +209,15 @@ class Injector:
     def type_text(self, text: str) -> None:
         if not text:
             return
-        # Paste everywhere (fast, atomic, no dropped characters) with the fixed chord
-        # timing that landed reliably. Terminal detection only selects the shortcut
-        # (Ctrl+Shift+V in terminals vs Ctrl+V elsewhere).
+        terminal = self._active_is_terminal()
+        # Terminals with terminal_mode="type": TYPE the text — characters reach the
+        # PTY reliably, so a TUI that swallows the paste keybind (OpenCode) still gets
+        # it. GUI apps, non-typeable text (CJK), and terminal_mode="paste" all paste.
+        if (terminal and self._terminal_mode == "type"
+                and _can_type(text) and _type_via_uinput(text)):
+            return
         if self._clipboard is None:
             raise InjectionError("clipboard manager unavailable — cannot paste")
-        terminal = self._active_is_terminal()
         self._clipboard.paste_text(text, lambda: self._send_paste_key(terminal))
 
     # ---- helpers ----

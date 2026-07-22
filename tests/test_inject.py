@@ -66,6 +66,38 @@ class InjectorTest(unittest.TestCase):
         self.assertEqual(clip.calls[0][0], "x")
 
 
+class TerminalModeTest(unittest.TestCase):
+    """inject_terminal_mode routes terminals to type or paste (patched — no real
+    injection). GUI apps always paste regardless."""
+
+    def _setup(self, window_class):
+        self.typed = []
+        _patch(self,
+               _active_window_class=lambda: window_class,
+               _type_via_uinput=lambda text: (self.typed.append(text) or True))
+
+    def test_terminal_type_mode_types(self):
+        self._setup("ghostty com.mitchellh.ghostty")
+        clip = FakeClipboard()
+        Injector(Config(inject_terminal_mode="type"), clipboard=clip).type_text("hi there")
+        self.assertEqual(self.typed, ["hi there"])
+        self.assertEqual(clip.calls, [])          # typed, not pasted
+
+    def test_terminal_paste_mode_pastes(self):
+        self._setup("ghostty com.mitchellh.ghostty")
+        clip = FakeClipboard()
+        Injector(Config(inject_terminal_mode="paste"), clipboard=clip).type_text("hi there")
+        self.assertEqual(self.typed, [])
+        self.assertEqual(clip.calls[0][0], "hi there")   # pasted
+
+    def test_type_mode_gui_still_pastes(self):
+        self._setup("google-chrome Google-chrome")
+        clip = FakeClipboard()
+        Injector(Config(inject_terminal_mode="type"), clipboard=clip).type_text("hi")
+        self.assertEqual(self.typed, [])          # GUI is not a terminal
+        self.assertEqual(clip.calls[0][0], "hi")
+
+
 class TerminalDetectionTest(unittest.TestCase):
     def test_terminal_window_is_detected(self):
         _patch(self, _active_window_class=lambda: "ghostty com.mitchellh.ghostty")
