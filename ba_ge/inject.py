@@ -27,7 +27,6 @@ _TERMINAL_HINTS = ("terminal", "konsole", "xterm", "alacritty", "kitty",
 _REGISTER_DELAY = 0.4   # one-time: let the compositor notice the new uinput device
 _MOD_SETTLE = 0.022     # settle each modifier before the next key — the fixed timing
 _KEY_HOLD = 0.022       # that worked reliably before the (reverted) modifier-poll
-_TYPE_GAP = 0.010       # per-character gap for the dormant typing fallback
 
 
 class InjectionError(Exception):
@@ -42,47 +41,6 @@ def resolve_backend(pref: str) -> str:
 
 _uinput_dev = None
 _uinput_failed = False
-_KEYMAP = None
-
-
-def _keymap() -> dict:
-    """char -> (evdev keycode, needs_shift) for printable US-ASCII. Cached."""
-    global _KEYMAP
-    if _KEYMAP is not None:
-        return _KEYMAP
-    import string
-    from evdev import ecodes as e
-    m: dict = {}
-    for c in string.ascii_lowercase:
-        m[c] = (getattr(e, "KEY_" + c.upper()), False)
-    for c in string.ascii_uppercase:
-        m[c] = (getattr(e, "KEY_" + c), True)
-    for i, c in enumerate("0123456789"):
-        m[c] = (getattr(e, "KEY_" + c), False)
-        m[")!@#$%^&*("[i]] = (getattr(e, "KEY_" + c), True)
-    for ch, pair in {
-        " ": (e.KEY_SPACE, False), "\t": (e.KEY_TAB, False), "\n": (e.KEY_ENTER, False),
-        "-": (e.KEY_MINUS, False), "_": (e.KEY_MINUS, True),
-        "=": (e.KEY_EQUAL, False), "+": (e.KEY_EQUAL, True),
-        "[": (e.KEY_LEFTBRACE, False), "{": (e.KEY_LEFTBRACE, True),
-        "]": (e.KEY_RIGHTBRACE, False), "}": (e.KEY_RIGHTBRACE, True),
-        "\\": (e.KEY_BACKSLASH, False), "|": (e.KEY_BACKSLASH, True),
-        ";": (e.KEY_SEMICOLON, False), ":": (e.KEY_SEMICOLON, True),
-        "'": (e.KEY_APOSTROPHE, False), '"': (e.KEY_APOSTROPHE, True),
-        "`": (e.KEY_GRAVE, False), "~": (e.KEY_GRAVE, True),
-        ",": (e.KEY_COMMA, False), "<": (e.KEY_COMMA, True),
-        ".": (e.KEY_DOT, False), ">": (e.KEY_DOT, True),
-        "/": (e.KEY_SLASH, False), "?": (e.KEY_SLASH, True),
-    }.items():
-        m[ch] = pair
-    _KEYMAP = m
-    return m
-
-
-def _can_type(text: str) -> bool:
-    """True if every character maps to a key (ASCII); CJK etc. must be pasted."""
-    km = _keymap()
-    return all(c in km for c in text)
 
 
 def _get_uinput():
@@ -94,8 +52,7 @@ def _get_uinput():
         return None
     try:
         from evdev import UInput, ecodes as e
-        keys = sorted({code for code, _ in _keymap().values()}
-                      | {e.KEY_LEFTCTRL, e.KEY_LEFTSHIFT, e.KEY_V})
+        keys = [e.KEY_LEFTCTRL, e.KEY_LEFTSHIFT, e.KEY_V]  # paste chord only
         dev = UInput({e.EV_KEY: keys}, name="ba-ge-virtual-kbd")
         time.sleep(_REGISTER_DELAY)  # once, so the first keystroke isn't dropped
         _uinput_dev = dev
@@ -165,57 +122,22 @@ def _send_via_pynput(terminal: bool) -> None:
             kb.release(m)
 
 
-def _type_via_uinput(text: str) -> bool:
-    """Type `text` character-by-character via uinput. False if the device is n/a.
-
-    Characters reach the app's input directly (no clipboard, no paste keybind), so
-    this is reliable in GTK terminals where the Ctrl+Shift+V keybind is flaky.
-    """
-    from evdev import ecodes as e
-    dev = _get_uinput()
-    if dev is None:
-        return False
-    km = _keymap()
-
-    def ev(code, value):
-        dev.write(e.EV_KEY, code, value)
-        dev.syn()
-
-    for ch in text:
-        entry = km.get(ch)
-        if entry is None:
-            return False  # non-typeable char (shouldn't happen; caller checked)
-        code, shift = entry
-        if shift:
-            ev(e.KEY_LEFTSHIFT, 1)
-        ev(code, 1)
-        ev(code, 0)
-        if shift:
-            ev(e.KEY_LEFTSHIFT, 0)
-        time.sleep(_TYPE_GAP)
-    return True
-
-
 class Injector:
     def __init__(self, config, clipboard=None):
         # clipboard is a ClipboardManager (Qt, main thread); app.py wires it in.
         self._clipboard = clipboard
         self.backend = "paste"
-        self._terminal_mode = getattr(config, "inject_terminal_mode", "paste")
 
     def bind_clipboard(self, clipboard) -> None:
         self._clipboard = clipboard
 
     def type_text(self, text: str) -> None:
+        # Always paste: set the clipboard and fire the paste shortcut. Never types
+        # character-by-character (drops spaces at speed, and is slow when made
+        # reliable). GUI apps use Ctrl+V; terminals use Ctrl+Shift+V.
         if not text:
             return
         terminal = self._active_is_terminal()
-        # Terminals with terminal_mode="type": TYPE the text — characters reach the
-        # PTY reliably, so a TUI that swallows the paste keybind (OpenCode) still gets
-        # it. GUI apps, non-typeable text (CJK), and terminal_mode="paste" all paste.
-        if (terminal and self._terminal_mode == "type"
-                and _can_type(text) and _type_via_uinput(text)):
-            return
         if self._clipboard is None:
             raise InjectionError("clipboard manager unavailable — cannot paste")
         self._clipboard.paste_text(text, lambda: self._send_paste_key(terminal))

@@ -17,8 +17,8 @@ class FakeClipboard:
 def _patch(testcase, **attrs):
     """Patch module-level ba_ge.inject attributes for the duration of a test.
 
-    IMPORTANT: tests must never invoke the real detection/typing, or they would
-    inject keystrokes into the live session. We force detection + typing to fakes.
+    IMPORTANT: tests must never invoke the real window detection, or they could
+    read from the live session. We force detection to a fake.
     """
     import ba_ge.inject as mod
     for name, value in attrs.items():
@@ -66,39 +66,15 @@ class InjectorTest(unittest.TestCase):
         self.assertEqual(clip.calls[0][0], "x")
 
 
-class TerminalModeTest(unittest.TestCase):
-    """inject_terminal_mode routes terminals to type or paste (patched — no real
-    injection). GUI apps always paste regardless."""
-
-    def _setup(self, window_class):
-        self.typed = []
-        _patch(self,
-               _active_window_class=lambda: window_class,
-               _type_via_uinput=lambda text: (self.typed.append(text) or True))
-
-    def test_terminal_type_mode_types(self):
-        self._setup("ghostty com.mitchellh.ghostty")
-        clip = FakeClipboard()
-        Injector(Config(inject_terminal_mode="type"), clipboard=clip).type_text("hi there")
-        self.assertEqual(self.typed, ["hi there"])
-        self.assertEqual(clip.calls, [])          # typed, not pasted
-
-    def test_terminal_paste_mode_pastes(self):
-        self._setup("ghostty com.mitchellh.ghostty")
-        clip = FakeClipboard()
-        Injector(Config(inject_terminal_mode="paste"), clipboard=clip).type_text("hi there")
-        self.assertEqual(self.typed, [])
-        self.assertEqual(clip.calls[0][0], "hi there")   # pasted
-
-    def test_type_mode_gui_still_pastes(self):
-        self._setup("google-chrome Google-chrome")
-        clip = FakeClipboard()
-        Injector(Config(inject_terminal_mode="type"), clipboard=clip).type_text("hi")
-        self.assertEqual(self.typed, [])          # GUI is not a terminal
-        self.assertEqual(clip.calls[0][0], "hi")
-
-
 class TerminalDetectionTest(unittest.TestCase):
+    """Terminals paste with Ctrl+Shift+V; GUI apps with Ctrl+V. Both always paste."""
+
+    def test_terminal_uses_shift_paste(self):
+        _patch(self, _active_window_class=lambda: "ghostty com.mitchellh.ghostty")
+        clip = FakeClipboard()
+        Injector(Config(), clipboard=clip).type_text("hi there")
+        self.assertEqual(clip.calls[0][0], "hi there")   # pasted, not typed
+
     def test_terminal_window_is_detected(self):
         _patch(self, _active_window_class=lambda: "ghostty com.mitchellh.ghostty")
         self.assertTrue(Injector(Config())._active_is_terminal())

@@ -123,10 +123,6 @@ class Config:
     audio_device: str = "default"
     key_delay_ms: int = 20  # inter-keystroke delay; too low can drop characters
     inject_backend: str = "paste"  # paste at cursor (X11, clipboard-coordinated)
-    # How to inject into TERMINALS: "paste" (fast) or "type" (reliable — characters
-    # reach the PTY, immune to a TUI's keyboard mode swallowing the paste keybind,
-    # e.g. OpenCode). GUI apps always paste. Only affects terminals.
-    inject_terminal_mode: str = "paste"
     ui_scale: float = 0.0  # UI zoom; 0 = auto-detect from display DPI
     keyterms: list = field(default_factory=list)  # bias recognition toward these terms
     api_base: str = "https://api.elevenlabs.io"
@@ -188,8 +184,6 @@ def _apply_toml(cfg: Config, data: dict) -> None:
         cfg.key_delay_ms = v
     if "backend" in inj:
         cfg.inject_backend = str(inj["backend"])
-    if "terminal_mode" in inj:
-        cfg.inject_terminal_mode = str(inj["terminal_mode"]).strip().lower()
 
     ui = data.get("ui", {})
     if (v := _num(ui, "scale", float)) is not None:
@@ -260,7 +254,6 @@ def dump_toml(cfg: Config) -> str:
         f"min_duration = {cfg.min_duration}\n\n"
         "[inject]\n"
         f'backend = {_toml_str(cfg.inject_backend)}   # paste at cursor (X11, clipboard-safe)\n'
-        f'terminal_mode = {_toml_str(cfg.inject_terminal_mode)}   # terminals: "paste" (fast) or "type" (reliable for TUIs like OpenCode)\n'
         f"key_delay_ms = {cfg.key_delay_ms}\n\n"
         "[ui]\n"
         f"scale = {cfg.ui_scale}   # 0 = auto-detect from display DPI (e.g. 1.5, 2.0)\n"
