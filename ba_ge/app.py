@@ -29,6 +29,46 @@ log = logging.getLogger("bage.app")
 _ERROR_RESET_DELAY = 2.0  # seconds before the ERROR indicator reverts to IDLE
 _SILENCE_PEAK = 64        # peak below this (of 32767) means the clip is silent
 _BUSY_TIMEOUT = 90.0      # force-recover if processing hangs this long (never stay stuck)
+_STOP_TIMEOUT = 5.0       # audio backend must hand back the clip within this
+
+
+def _call_with_timeout(fn, timeout: float):
+    """Run ``fn()`` on a daemon thread; return ``(finished, result)``.
+
+    Defence in depth for the audio backend. ``_BUSY_TIMEOUT`` only resets the
+    *state* — it cannot unwedge a worker parked inside a C call, which is how a
+    stalled recorder used to leave the tray looking idle while dictation was dead
+    (see ba_ge/audio_sd.py). Bounding the call surfaces the stall as a normal error
+    instead. A timed-out worker is abandoned, never joined: it is a daemon so it
+    cannot hold the process open, and re-raising here would just relocate the hang.
+    """
+    box: dict = {}
+
+    def run():
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, name="bage-audio-stop", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        return False, None
+    if "error" in box:
+        raise box["error"]
+    return True, box.get("value")
+
+
+def _close_recorder(recorder) -> None:
+    """Release a recorder's device, if its backend holds one (macOS/Windows)."""
+    close = getattr(recorder, "close", None)
+    if close is None:
+        return
+    try:
+        close()
+    except Exception:
+        log.debug("recorder close failed", exc_info=True)
 
 # TEMPORARY debug aid: append the raw transcript Scribe returns (before typing)
 # so the exact text — spaces and all — can be inspected. Removed after we diagnose
@@ -163,7 +203,11 @@ class DictationApp:
 
     def _process(self) -> None:
         try:
-            wav = self.recorder.stop()
+            finished, wav = _call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
+            if not finished:
+                raise AudioError(
+                    f"Audio backend stalled (>{_STOP_TIMEOUT:.0f}s) ending the "
+                    "recording. Recording was lost; try again.")
             if not wav:
                 self._set_state(State.IDLE)
                 return
@@ -285,7 +329,11 @@ class DictationApp:
             self.notifier("Ba-Ge", "Settings saved — will apply when idle.")
             return
         self.config = load_config()
+        previous = self.recorder
         self.recorder = platform.make_recorder(self.config)
+        # The old backend may hold the mic open (see ba_ge/audio_sd.py); dropping the
+        # reference alone would leak the device and leave the OS indicator lit.
+        _close_recorder(previous)
         self.injector = platform.make_injector(self.config)
         self._bind_clipboard()
         self.transcribe_fn = lambda wav: transcribe(wav, self.config)
@@ -314,9 +362,12 @@ class DictationApp:
             self._hotkey = None
         try:
             if self.state is State.RECORDING:
-                self.recorder.stop()
+                _call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
         except Exception:
             pass
+        # Hand the mic back. Bounded inside the backend, so a wedged audio layer
+        # can't stop the app from quitting (that is what forced SIGKILL before).
+        _close_recorder(self.recorder)
 
 
 def _transcribe_file_cli(rest) -> None:

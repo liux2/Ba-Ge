@@ -14,6 +14,8 @@
 # shutil fcopyfile) help but aren't bulletproof. RELIABLE fix: build from a copy in
 # a NON-synced dir, e.g.:
 #   cp -R . /tmp/ba-ge-build && cd /tmp/ba-ge-build && PY=/tmp/bage-venv/bin/python ./build-macos.sh
+# Copy .git along with it (cp -R . does; an rsync with --exclude .git does not) so
+# the build can stamp its source ref — otherwise pass BAGE_SOURCE_REF=... instead.
 # (or turn off "Optimize Mac Storage" for the volume).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -112,11 +114,29 @@ SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null \
 DEPLOY_DIR="${DEPLOY_DIR:-$HOME/Applications}"
 ENTITLEMENTS="$(pwd)/packaging/entitlements.plist"
 
+# The deployed bundle is meant to be the ONLY copy on the machine, so nothing else
+# records what was built — hence provenance. $BAGE_SOURCE_REF overrides for builds
+# from a tree without .git (the /tmp recipe above copies it, so this normally
+# resolves on its own).
+BUILT_AT="$(date '+%Y-%m-%d %H:%M:%S')"
+SOURCE_REF="${BAGE_SOURCE_REF:-$(git describe --tags --always --dirty 2>/dev/null \
+    || echo unknown)}"
+
 if [ -n "$SIGN_ID" ] && [ -f "$ENTITLEMENTS" ]; then
     echo "==> Signing with: $SIGN_ID"
     STAGE="$(mktemp -d)/Ba-Ge.app"
     ditto dist/Ba-Ge.app "$STAGE"
     find "$STAGE" -print0 | xargs -0 xattr -c 2>/dev/null || true  # iCloud/Finder detritus
+    # Stamp provenance INTO the bundle, before signing so it's covered by the
+    # signature and can't be edited without breaking it. Since dist/ is deleted
+    # below, this is how the installed app stays self-describing:
+    #   cat ~/Applications/Ba-Ge.app/Contents/Resources/build-info.txt
+    cat > "$STAGE/Contents/Resources/build-info.txt" <<INFO
+source_ref  $SOURCE_REF
+built_at    $BUILT_AT
+built_by    $(id -un)@$(hostname -s)
+identity    $SIGN_ID
+INFO
     codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" \
         -s "$SIGN_ID" "$STAGE"
     codesign --verify "$STAGE" >/dev/null 2>&1 \
@@ -127,14 +147,43 @@ if [ -n "$SIGN_ID" ] && [ -f "$ENTITLEMENTS" ]; then
     rm -rf "$DEPLOY_DIR/Ba-Ge.app"
     ditto "$STAGE" "$DEPLOY_DIR/Ba-Ge.app"
     rm -rf "$(dirname "$STAGE")"
+
+    # ---- compilation history: keep the record, not the binary ----
+    # A build usually runs from a throwaway copy (see the iCloud note at the top),
+    # so this lives outside the build tree or it would be deleted with it. One line
+    # per deploy is enough to tie the installed app to a commit and rebuild it —
+    # which is the whole point of not keeping a second 200 MB bundle around.
+    HISTORY="${BAGE_HISTORY:-$HOME/Library/Application Support/ba-ge/build-history.tsv}"
+    mkdir -p "$(dirname "$HISTORY")"
+    [ -s "$HISTORY" ] \
+        || printf 'built_at\tsource_ref\texe_sha256\tsize\tidentity\n' > "$HISTORY"
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$BUILT_AT" "$SOURCE_REF" \
+        "$(shasum -a 256 "$DEPLOY_DIR/Ba-Ge.app/Contents/MacOS/Ba-Ge" | cut -d' ' -f1)" \
+        "$(du -sh "$DEPLOY_DIR/Ba-Ge.app" | cut -f1)" \
+        "$SIGN_ID" >> "$HISTORY"
+
+    # Drop PyInstaller's staging trees (~430 MB). The deployed bundle is then the
+    # only copy of the app on the machine, so a stale dist/Ba-Ge.app can never be
+    # launched by mistake or drift out of sync with what's installed. KEEP_BUILD=1
+    # retains them when you need to inspect the raw PyInstaller output.
+    if [ -z "${KEEP_BUILD:-}" ]; then
+        rm -rf dist build
+    fi
+
     cat <<EOF
 
-Built + signed: $DEPLOY_DIR/Ba-Ge.app
+Built + signed: $DEPLOY_DIR/Ba-Ge.app  (the only copy — dist/ removed)
+  Source   : $SOURCE_REF
+  History  : $HISTORY
   Identity : $SIGN_ID
   Runtime  : hardened, entitlements = packaging/entitlements.plist (incl. mic)
-Run THIS copy (not dist/) — its signature is stable, so your Input Monitoring /
-Accessibility / Microphone grants persist across rebuilds. First build with a new
-cert: grant the three permissions once (tray → Permissions…), then never again.
+Its signature is stable, so your Input Monitoring / Accessibility / Microphone
+grants persist across rebuilds. First build with a new cert: grant the three
+permissions once (tray → Permissions…), then never again.
+The bundle carries its own provenance — Contents/Resources/build-info.txt — and
+every deploy is appended to the history file above; rebuild any past version with
+\`git checkout <source_ref>\` then re-run this script.
 For Gatekeeper on other Macs: notarytool submit + stapler staple.
 EOF
 else

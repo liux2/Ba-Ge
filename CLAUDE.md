@@ -34,6 +34,24 @@ with a custom-vocabulary (`keyterms`) dictionary.
     for the GNOME tray — Qt's self-contained wheels + native `QSystemTrayIcon`
     (StatusNotifier) fix both, with no gi/Tk. **GTK/tkinter/pystray are gone.**
   - ✅ audio: `audio.py` (arecord, Linux) + `audio_sd.py` (sounddevice, mac/win).
+    - **Audio note (hard-won): NEVER stop the PortAudio stream per utterance.**
+      `audio_sd.py` opens the stream once and leaves it running; the hotkey only
+      arms/disarms buffering, so `start`/`stop` make no PortAudio call at all. A
+      per-utterance `stream.stop()` deadlocks against CoreAudio (lock inversion:
+      the stopping thread holds the AudioUnit lock inside `Pa_StopStream` and waits
+      on the IO-context mutex, while the CoreAudio IO thread holds that mutex inside
+      PortAudio's `startStopCallback` → `AudioUnitGetProperty` and waits on the
+      AudioUnit lock). It wedged the app twice in ~6h of real use. The failure is
+      nasty: the `_BUSY_TIMEOUT` watchdog resets the *state*, so the tray goes idle
+      and looks healthy while the worker is parked in `recorder.stop()` forever, the
+      mic is never released, and only SIGKILL clears it (SIGTERM hangs in Qt's
+      teardown of the wedged audio layer). Diagnose with `sample <pid>`, not the log.
+      Cost of the fix: the OS mic indicator stays lit until quit. Rejected
+      alternative: an ffmpeg/avfoundation subprocess per utterance — deadlock-proof,
+      but measured **450–640 ms of clipped speech** at every capture start (vs ~0 ms
+      for the live stream), which is worse for dictation. `app.py` also bounds
+      `recorder.stop()` with `_STOP_TIMEOUT` so any future audio stall surfaces as a
+      visible error instead of a silent zombie.
   - ✅ inject: `inject.py` + `clipboard.py` (paste at cursor, Linux X11 — the Qt
     clipboard manager preserves the board + keeps a history stack; the keystroke is
     sent via **uinput/evdev**, XTEST/pynput fallback) + `inject_pynput.py` (mac/win).
