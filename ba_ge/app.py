@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from . import paths, platform, singleton
-from .audio import AudioError, peak_amplitude
+from .audio import AudioError, level_stats
 from .config import CONFIG_PATH, DEPRECATED_MODELS, ensure_config_file, load_config
 from .ui import make_indicator
 from .inject import InjectionError
@@ -30,6 +30,13 @@ _ERROR_RESET_DELAY = 2.0  # seconds before the ERROR indicator reverts to IDLE
 _SILENCE_PEAK = 64        # peak below this (of 32767) means the clip is silent
 _BUSY_TIMEOUT = 90.0      # force-recover if processing hangs this long (never stay stuck)
 _STOP_TIMEOUT = 5.0       # audio backend must hand back the clip within this
+
+# Input-level guards. A clip driven into the rails is destroyed but LOUD, so the
+# silence floor never catches it — the model just returns confident nonsense and the
+# app looks broken. Warn on both ends of the range instead, and say what to change.
+_CLIP_PCT = 0.05          # % of samples pinned to the rail before we call it clipping
+_QUIET_DBFS = -45.0       # RMS below this is too faint to transcribe reliably
+_LEVEL_WARN_INTERVAL = 90.0  # don't nag on every utterance of a bad setup
 
 
 def _close_recorder(recorder) -> None:
@@ -76,6 +83,7 @@ class DictationApp:
         self._hotkey = None
         self._error_timer = None
         self._busy_watchdog = None
+        self._last_level_warn = 0.0
 
     @property
     def state(self) -> State:
@@ -184,7 +192,12 @@ class DictationApp:
             if not wav:
                 self._set_state(State.IDLE)
                 return
-            if peak_amplitude(wav) < _SILENCE_PEAK:
+            levels = level_stats(wav)
+            # Logged for every clip: when a transcript comes out wrong, this is the
+            # first thing worth looking at, and it costs one line.
+            log.info("input level: peak=%d rms=%.1f dBFS clipped=%.2f%%",
+                     levels.peak, levels.rms_dbfs, levels.clipped_pct)
+            if levels.peak < _SILENCE_PEAK:
                 # Skip the (billed) API call and tell the user what's wrong.
                 self._set_state(State.IDLE)
                 self.notifier(
@@ -193,6 +206,9 @@ class DictationApp:
                     "device selected? (Settings → Microphone)",
                     urgency="critical")
                 return
+            # Still transcribe: the words are usually partly recoverable, and the
+            # user wants their text. The warning explains why it may be wrong.
+            self._warn_about_levels(levels)
             text = (self.transcribe_fn(wav) or "").strip()
             log.info("transcript: %r", text)  # raw text from Scribe, before typing
             _log_transcript(text, getattr(self.injector, "backend", ""))
@@ -207,6 +223,30 @@ class DictationApp:
             self._fail(f"Unexpected error: {exc}")
         finally:
             self._disarm_busy_watchdog()
+
+    def _warn_about_levels(self, levels) -> None:
+        """Tell the user when the *input* is why a transcript will be wrong.
+
+        Rate-limited: a badly set-up mic would otherwise fire on every utterance,
+        and a notification per sentence is its own kind of broken.
+        """
+        if levels.clipped_pct >= _CLIP_PCT:
+            title = "Ba-Ge — microphone too loud"
+            body = (f"Audio is clipping ({levels.clipped_pct:.1f}% at maximum), so "
+                    "words may come out wrong. Turn the microphone's gain down.")
+        elif levels.rms_dbfs < _QUIET_DBFS:
+            title = "Ba-Ge — microphone very quiet"
+            body = (f"Input is only {levels.rms_dbfs:.0f} dBFS, which is too faint to "
+                    "transcribe reliably. Move closer, or raise the mic's gain.")
+        else:
+            return
+
+        now = time.monotonic()
+        if now - self._last_level_warn < _LEVEL_WARN_INTERVAL:
+            return  # already told them recently; the log line still records it
+        self._last_level_warn = now
+        log.warning("%s: %s", title, body)
+        self.notifier(title, body, urgency="critical")
 
     def _recover_if_audio_stalled(self) -> None:
         """Relaunch if the audio backend wedged releasing the mic.

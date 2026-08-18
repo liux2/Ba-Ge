@@ -64,6 +64,16 @@ with a custom-vocabulary (`keyterms`) dictionary.
       `app.py` also bounds
       `recorder.stop()` with `_STOP_TIMEOUT` so any future audio stall surfaces as a
       visible error instead of a silent zombie.
+  - ✅ **input-level guard** (`audio.level_stats` + `app._warn_about_levels`): the
+    silence floor alone can't catch a mic driven into the rails — clipped audio is
+    LOUD, just destroyed, so Scribe returns confident nonsense ("page 4" -> "H4")
+    and the app looks broken. Real case: a wireless mic set to +12 dB on top of
+    macOS input at 100%. Now every clip logs `peak/rms/clipped%`, and clipping
+    (>=0.05% pinned) or faint input (< -45 dBFS RMS) notifies the user with the fix
+    ("turn the gain down"), rate-limited to one warning per 90s. It still
+    transcribes — the words are usually partly recoverable and the user wants their
+    text; only true silence skips the billed API call. Thresholds calibrated against
+    real recordings: clean takes measured 0.001-0.015% clipped, overdrive ~50%.
   - ✅ inject: `inject.py` + `clipboard.py` (paste at cursor, Linux X11 — the Qt
     clipboard manager preserves the board + keeps a history stack; the keystroke is
     sent via **uinput/evdev**, XTEST/pynput fallback) + `inject_pynput.py` (mac/win).

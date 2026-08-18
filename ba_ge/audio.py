@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import array
 import logging
+import math
 import os
 import signal
 import struct
@@ -19,12 +20,16 @@ import sys
 import tempfile
 import threading
 import time
+from typing import NamedTuple
 
 log = logging.getLogger("bage.audio")
 
 # Canonical PCM WAV header is 44 bytes; anything <= that contains no audio frames.
 _WAV_HEADER_BYTES = 44
 _BYTES_PER_SAMPLE = 2  # S16_LE
+# |sample| at or above this counts as pinned to the rail (~-0.02 dBFS).
+_CLIP_FLOOR = 32700
+_SILENT_DBFS = -999.0
 
 
 class AudioError(Exception):
@@ -89,14 +94,10 @@ def _patch_wav_sizes(data: bytes) -> bytes:
     return bytes(buf)
 
 
-def peak_amplitude(wav: bytes) -> int:
-    """Peak |sample| of the S16_LE PCM payload; 0 for silence/empty.
-
-    Used to catch a muted mic or dead device: a silent clip would otherwise
-    sail through to a 200 from Scribe with an empty transcript.
-    """
+def _samples(wav: bytes) -> array.array:
+    """The S16_LE PCM payload as native-order signed shorts (empty if none)."""
     if len(wav) <= _WAV_HEADER_BYTES:
-        return 0
+        return array.array("h")
     pcm = wav[_WAV_HEADER_BYTES:]
     if len(pcm) % 2:
         pcm = pcm[:-1]
@@ -104,9 +105,50 @@ def peak_amplitude(wav: bytes) -> int:
     samples.frombytes(pcm)
     if sys.byteorder == "big":
         samples.byteswap()
+    return samples
+
+
+def peak_amplitude(wav: bytes) -> int:
+    """Peak |sample| of the S16_LE PCM payload; 0 for silence/empty.
+
+    Used to catch a muted mic or dead device: a silent clip would otherwise
+    sail through to a 200 from Scribe with an empty transcript.
+    """
+    samples = _samples(wav)
     if not samples:
         return 0
     return max(-min(samples), max(samples))
+
+
+class LevelStats(NamedTuple):
+    peak: int          # 0..32768
+    rms_dbfs: float    # -inf..0; loudness, not peak
+    clipped_pct: float # % of samples pinned to the rails
+
+
+def level_stats(wav: bytes) -> LevelStats:
+    """Input level of a clip, for telling the user *why* a transcript is wrong.
+
+    A silence check alone is not enough. Audio driven into the rails passes it
+    happily — the signal is loud, just destroyed — and the model returns confident
+    nonsense ("page 4" -> "H4"), which reads as a broken app rather than a mic
+    turned up too far. Peak alone is not enough either: normal speech has 12-18 dB
+    of crest, so an occasional plosive touching full scale is fine while a *sustained*
+    pin is not. Hence the clipped fraction, and RMS for the quiet end.
+    """
+    samples = _samples(wav)
+    if not samples:
+        return LevelStats(0, _SILENT_DBFS, 0.0)
+    peak = max(-min(samples), max(samples))
+    total = 0
+    clipped = 0
+    for v in samples:
+        total += v * v
+        if v >= _CLIP_FLOOR or v <= -_CLIP_FLOOR:
+            clipped += 1
+    rms = math.sqrt(total / len(samples))
+    dbfs = 20 * math.log10(rms / 32768) if rms > 0 else _SILENT_DBFS
+    return LevelStats(peak, dbfs, 100.0 * clipped / len(samples))
 
 
 def _wav_seconds(data: bytes, sample_rate: int, channels: int) -> float | None:
