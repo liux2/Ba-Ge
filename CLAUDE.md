@@ -34,10 +34,8 @@ with a custom-vocabulary (`keyterms`) dictionary.
     for the GNOME tray — Qt's self-contained wheels + native `QSystemTrayIcon`
     (StatusNotifier) fix both, with no gi/Tk. **GTK/tkinter/pystray are gone.**
   - ✅ audio: `audio.py` (arecord, Linux) + `audio_sd.py` (sounddevice, mac/win).
-    - **Audio note (hard-won): NEVER stop the PortAudio stream per utterance.**
-      `audio_sd.py` opens the stream once and leaves it running; the hotkey only
-      arms/disarms buffering, so `start`/`stop` make no PortAudio call at all. A
-      per-utterance `stream.stop()` deadlocks against CoreAudio (lock inversion:
+    - **Audio note (hard-won): `stream.stop()` can deadlock — treat it as hostile.**
+      A `stream.stop()` deadlocks against CoreAudio (lock inversion:
       the stopping thread holds the AudioUnit lock inside `Pa_StopStream` and waits
       on the IO-context mutex, while the CoreAudio IO thread holds that mutex inside
       PortAudio's `startStopCallback` → `AudioUnitGetProperty` and waits on the
