@@ -23,10 +23,26 @@ tray looks healthy while dictation is permanently dead and only SIGKILL clears i
 Never issuing a per-utterance stop removes the window entirely. Arming/disarming
 touches no PortAudio entry point at all.
 
-The cost is that the OS microphone indicator stays lit while the stream is open
-(from the first dictation until quit), which is the deliberate trade for never
-hanging. Measured: 0 ms of audio lost at the start of a recording, vs ~500 ms for a
-spawn-per-utterance capture process.
+**The microphone is released as soon as a recording ends** (``config.idle_release``
+= 0, the default), so the OS indicator is lit only while you are actually dictating.
+Holding the stream open between utterances would dodge the deadlock completely, but
+an always-live mic reads as surveillance and is not an acceptable price for it.
+
+So the stop still happens per utterance, and the deadlock is still *possible*. What
+changed is that it is no longer fatal:
+
+* ``_close_stream`` runs the stop/close on a daemon thread bounded by
+  ``_CLOSE_TIMEOUT`` and abandons it if it wedges, so nothing ever blocks forever —
+  and because the audio is already copied out of the buffer before the close, a
+  deadlock does not even cost you the utterance in progress.
+* A wedged close poisons this process's CoreAudio: every later open fails with
+  ``paInternalError``. That is unrecoverable in-process, so ``stalled`` is set and
+  ``app.py`` relaunches (see ``platform.relaunch_self``) rather than leaving a
+  half-dead app behind.
+
+``config.idle_release`` > 0 keeps the stream alive for that many idle seconds as a
+grace period, trading indicator time for fewer stops. Set it only if the deadlock
+actually bites you in practice.
 
 Silence still has to be detected by signal, not by exception — see
 ``peak_amplitude`` and docs/PORTING.md (mic TCC / the Windows privacy toggle both
@@ -73,7 +89,11 @@ class SdRecorder:
         self._chunks: list[bytes] = []
         self._armed = False
         self._start = 0.0
+        self._idle_timer: threading.Timer | None = None
         self._lock = threading.Lock()
+        # Set when a stop/close wedged: this process's CoreAudio is then poisoned
+        # and only a relaunch clears it. app.py checks this after every recording.
+        self.stalled = False
 
     def _resolve_device(self):
         dev = self.config.audio_device
@@ -152,22 +172,52 @@ class SdRecorder:
         worker.start()
         worker.join(_CLOSE_TIMEOUT)
         if worker.is_alive():
-            log.error("PortAudio did not close within %.1fs — abandoning the stream",
+            log.error("PortAudio did not close within %.1fs — abandoning the stream; "
+                      "this process's audio is now unusable and needs a relaunch",
                       _CLOSE_TIMEOUT)
+            self.stalled = True
             return False
         return True
 
     def close(self) -> bool:
         """Release the microphone. Safe to call more than once."""
         with self._lock:
+            self._cancel_idle_release()
             self._armed = False
             self._chunks = []
             return self._close_stream()
+
+    # ---- idle release (so the OS mic indicator isn't permanent) ----
+
+    def _cancel_idle_release(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+
+    def _schedule_idle_release(self) -> None:
+        delay = float(getattr(self.config, "idle_release", 0) or 0)
+        if delay <= 0:
+            return  # opted out: hold the mic until quit
+        self._idle_timer = threading.Timer(delay, self._release_if_idle)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
+
+    def _release_if_idle(self) -> None:
+        with self._lock:
+            self._idle_timer = None
+            if self._armed or self._stream is None:
+                return  # a recording started in the meantime
+            log.info("idle — releasing the microphone (indicator goes out)")
+            self._close_stream()
 
     # ---- recording (no PortAudio calls on this path) ----
 
     def start(self) -> None:
         with self._lock:
+            # Cancel first: an idle release firing mid-dictation would be worse than
+            # a late one. Holding the lock also means a release already in progress
+            # finishes (~100ms) before we reopen, rather than racing it.
+            self._cancel_idle_release()
             self._ensure_stream()
             self._chunks = []  # fresh buffer BEFORE arming, never the reverse
             self._start = time.monotonic()
@@ -180,6 +230,13 @@ class SdRecorder:
             self._armed = False
             wall = time.monotonic() - self._start
             chunks, self._chunks = self._chunks, []
+            # Audio is already out of the buffer, so releasing here costs nothing
+            # even if the close wedges — the utterance still transcribes.
+            self._cancel_idle_release()
+            if float(getattr(self.config, "idle_release", 0) or 0) <= 0:
+                self._close_stream()  # mic off now, not "eventually"
+            else:
+                self._schedule_idle_release()
 
         pcm = b"".join(chunks)
         if not pcm:

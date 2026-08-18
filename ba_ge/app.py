@@ -226,6 +226,7 @@ class DictationApp:
             if text:
                 self.injector.type_text(text)
             self._set_state(State.IDLE)
+            self._recover_if_audio_stalled()  # after injecting: never lose the text
         except (TranscriptionError, InjectionError, AudioError) as exc:
             self._fail(str(exc))
         except Exception as exc:  # pragma: no cover - defensive
@@ -233,6 +234,22 @@ class DictationApp:
             self._fail(f"Unexpected error: {exc}")
         finally:
             self._disarm_busy_watchdog()
+
+    def _recover_if_audio_stalled(self) -> None:
+        """Relaunch if the audio backend wedged releasing the mic.
+
+        A deadlocked PortAudio stop poisons this process's CoreAudio — every later
+        open fails with paInternalError — and nothing in-process can clear it. The
+        old behaviour was to keep running as a dead app that still looked healthy;
+        restarting costs a second and keeps dictation working. Deliberately called
+        only after the transcript has been injected, so recovery never eats text.
+        """
+        if not getattr(self.recorder, "stalled", False):
+            return
+        log.error("audio backend wedged releasing the mic — relaunching")
+        self.notifier("Ba-Ge", "Audio glitch — restarting to recover.",
+                      urgency="critical")
+        platform.relaunch_self()  # does not return
 
     def _fail(self, message: str) -> None:
         log.error(message)

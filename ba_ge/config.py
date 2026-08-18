@@ -103,6 +103,13 @@ device = "default"        # ALSA device; "default" follows the PipeWire default 
 sample_rate = 16000
 channels = 1
 min_duration = 0.3        # ignore accidental taps shorter than this (seconds)
+# macOS/Windows only. 0 (default) releases the microphone the moment a recording
+# ends, so the OS mic indicator is lit ONLY while you are dictating. A positive
+# value keeps the capture stream alive for that many idle seconds instead — the
+# indicator stays lit that much longer, in exchange for fewer stream stops (each
+# stop carries a small CoreAudio deadlock risk; see ba_ge/audio_sd.py). Raise this
+# only if that deadlock actually bites you.
+idle_release = 0
 
 [inject]
 backend = "paste"         # paste at the cursor (X11); atomic + clipboard-safe
@@ -121,6 +128,7 @@ class Config:
     sample_rate: int = 16000
     channels: int = 1
     audio_device: str = "default"
+    idle_release: float = 0.0  # keep the mic N idle seconds; 0 = release immediately
     key_delay_ms: int = 20  # inter-keystroke delay; too low can drop characters
     inject_backend: str = "paste"  # paste at cursor (X11, clipboard-coordinated)
     ui_scale: float = 0.0  # UI zoom; 0 = auto-detect from display DPI
@@ -178,6 +186,8 @@ def _apply_toml(cfg: Config, data: dict) -> None:
         cfg.channels = v
     if (v := _num(au, "min_duration", float)) is not None:
         cfg.min_duration = v
+    if (v := _num(au, "idle_release", float)) is not None:
+        cfg.idle_release = max(0.0, v)
 
     inj = data.get("inject", {})
     if (v := _num(inj, "key_delay_ms", int)) is not None:

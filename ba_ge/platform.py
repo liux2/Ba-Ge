@@ -110,6 +110,40 @@ def ffmpeg_exe() -> str:
         return "ffmpeg"
 
 
+# --- self-relaunch (recovery from an unrecoverable backend state) ---
+
+def relaunch_self() -> None:
+    """Quit and relaunch this app. Does not return.
+
+    Used for states no in-process recovery can clear — new TCC grants, or a
+    PortAudio/CoreAudio stop that deadlocked and poisoned this process's audio
+    (every later open then fails with paInternalError; see ba_ge/audio_sd.py).
+
+    The single-instance lock is held until THIS process dies, so the relaunch waits
+    for our PID to exit before reopening — otherwise the new instance would hit the
+    lock and immediately quit.
+    """
+    import os
+    import shlex
+    import subprocess
+    import sys
+
+    pid = os.getpid()
+    marker = ".app/Contents/MacOS/"
+    try:
+        if marker in sys.executable:
+            app_path = sys.executable.split(marker)[0] + ".app"
+            cmd = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
+                   f"open -n {shlex.quote(app_path)}")
+            subprocess.Popen(["/bin/sh", "-c", cmd])
+        else:
+            subprocess.Popen([sys.executable] + sys.argv)
+    except Exception:
+        log.warning("relaunch failed", exc_info=True)
+    finally:
+        os._exit(0)
+
+
 # --- permissions (macOS TCC; no-op elsewhere) ---
 
 # The three grants Ba-Ge needs, in the order the user should tackle them (hotkey

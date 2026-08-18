@@ -46,10 +46,22 @@ with a custom-vocabulary (`keyterms`) dictionary.
       and looks healthy while the worker is parked in `recorder.stop()` forever, the
       mic is never released, and only SIGKILL clears it (SIGTERM hangs in Qt's
       teardown of the wedged audio layer). Diagnose with `sample <pid>`, not the log.
-      Cost of the fix: the OS mic indicator stays lit until quit. Rejected
-      alternative: an ffmpeg/avfoundation subprocess per utterance — deadlock-proof,
-      but measured **450–640 ms of clipped speech** at every capture start (vs ~0 ms
-      for the live stream), which is worse for dictation. `app.py` also bounds
+      **But holding the stream open is NOT acceptable**: a permanently lit mic
+      indicator reads as spyware, and the user rejected it outright. So
+      `[audio] idle_release` defaults to **0 = release the mic the instant a
+      recording ends**; a positive value keeps the stream alive that many idle
+      seconds (fewer stops, longer-lit indicator) and is the escape hatch if the
+      deadlock ever bites in practice. Measured cost of releasing immediately:
+      **~79 ms** of speech lost at the start (max 133 ms), stop() ~109 ms — vs ~0 ms
+      when the stream is held, and **450–640 ms** for the rejected
+      ffmpeg/avfoundation subprocess-per-utterance (deadlock-proof but far too much
+      clipping). Since the per-utterance stop is back, it is made survivable rather
+      than avoided: the audio is copied out of the buffer BEFORE the close, so a
+      deadlock never costs the utterance in progress; `_close_stream` is bounded and
+      abandons a wedged thread; and it sets `stalled`, which `app.py` turns into
+      `platform.relaunch_self()` (a wedged close poisons this process's CoreAudio —
+      every later open fails `paInternalError` — and nothing in-process clears it).
+      `app.py` also bounds
       `recorder.stop()` with `_STOP_TIMEOUT` so any future audio stall surfaces as a
       visible error instead of a silent zombie.
   - ✅ inject: `inject.py` + `clipboard.py` (paste at cursor, Linux X11 — the Qt

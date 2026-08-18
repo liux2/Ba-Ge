@@ -184,27 +184,5 @@ class PermissionsWindow:
 
 
 def _relaunch_self() -> None:
-    """Quit and relaunch the app bundle (macOS) so new grants take effect.
-
-    The single-instance lock is held until THIS process dies, so the relaunch
-    waits for our PID to exit before reopening — otherwise the new instance would
-    hit the lock and immediately quit."""
-    import os
-    import shlex
-    import subprocess
-    import sys
-
-    pid = os.getpid()
-    marker = ".app/Contents/MacOS/"
-    try:
-        if marker in sys.executable:
-            app_path = sys.executable.split(marker)[0] + ".app"
-            cmd = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
-                   f"open -n {shlex.quote(app_path)}")
-            subprocess.Popen(["/bin/sh", "-c", cmd])
-        else:
-            subprocess.Popen([sys.executable] + sys.argv)
-    except Exception:
-        log.warning("relaunch failed", exc_info=True)
-    finally:
-        os._exit(0)
+    """Quit and relaunch the app bundle (macOS) so new grants take effect."""
+    platform.relaunch_self()
