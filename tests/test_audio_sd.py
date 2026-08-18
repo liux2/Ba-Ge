@@ -18,7 +18,7 @@ import time
 import types
 import unittest
 
-from ba_ge.app import _call_with_timeout
+from ba_ge.platform import call_with_timeout as _call_with_timeout
 from ba_ge.audio import peak_amplitude
 from ba_ge.audio_sd import AudioError, SdRecorder
 from ba_ge.config import Config

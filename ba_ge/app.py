@@ -32,34 +32,6 @@ _BUSY_TIMEOUT = 90.0      # force-recover if processing hangs this long (never s
 _STOP_TIMEOUT = 5.0       # audio backend must hand back the clip within this
 
 
-def _call_with_timeout(fn, timeout: float):
-    """Run ``fn()`` on a daemon thread; return ``(finished, result)``.
-
-    Defence in depth for the audio backend. ``_BUSY_TIMEOUT`` only resets the
-    *state* — it cannot unwedge a worker parked inside a C call, which is how a
-    stalled recorder used to leave the tray looking idle while dictation was dead
-    (see ba_ge/audio_sd.py). Bounding the call surfaces the stall as a normal error
-    instead. A timed-out worker is abandoned, never joined: it is a daemon so it
-    cannot hold the process open, and re-raising here would just relocate the hang.
-    """
-    box: dict = {}
-
-    def run():
-        try:
-            box["value"] = fn()
-        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread
-            box["error"] = exc
-
-    worker = threading.Thread(target=run, name="bage-audio-stop", daemon=True)
-    worker.start()
-    worker.join(timeout)
-    if worker.is_alive():
-        return False, None
-    if "error" in box:
-        raise box["error"]
-    return True, box.get("value")
-
-
 def _close_recorder(recorder) -> None:
     """Release a recorder's device, if its backend holds one (macOS/Windows)."""
     close = getattr(recorder, "close", None)
@@ -69,6 +41,7 @@ def _close_recorder(recorder) -> None:
         close()
     except Exception:
         log.debug("recorder close failed", exc_info=True)
+
 
 # TEMPORARY debug aid: append the raw transcript Scribe returns (before typing)
 # so the exact text — spaces and all — can be inspected. Removed after we diagnose
@@ -203,7 +176,7 @@ class DictationApp:
 
     def _process(self) -> None:
         try:
-            finished, wav = _call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
+            finished, wav = platform.call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
             if not finished:
                 raise AudioError(
                     f"Audio backend stalled (>{_STOP_TIMEOUT:.0f}s) ending the "
@@ -379,7 +352,7 @@ class DictationApp:
             self._hotkey = None
         try:
             if self.state is State.RECORDING:
-                _call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
+                platform.call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
         except Exception:
             pass
         # Hand the mic back. Bounded inside the backend, so a wedged audio layer

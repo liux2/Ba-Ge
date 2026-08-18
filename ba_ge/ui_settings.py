@@ -90,6 +90,7 @@ def open_settings(root=None, exec_cmd: str = "ba-ge", on_saved=None) -> None:
     win = _current.get("win")
     if win is not None:
         try:
+            win.refresh_devices()  # mics may have come or gone since last time
             win.show()
             win.raise_()
             win.activateWindow()
@@ -207,13 +208,7 @@ class SettingsWindow(QWidget):
 
         self.mic = QComboBox()
         self._mic_devs = []
-        for dev, label in platform.list_input_devices():
-            self.mic.addItem(label, dev)
-            self._mic_devs.append(dev)
-        if self.cfg.audio_device not in self._mic_devs:
-            self.mic.addItem(self.cfg.audio_device, self.cfg.audio_device)
-            self._mic_devs.append(self.cfg.audio_device)
-        self.mic.setCurrentIndex(self._mic_devs.index(self.cfg.audio_device))
+        self.refresh_devices()
         add("Microphone", self.mic)
 
         self.min_dur = QDoubleSpinBox()
@@ -245,6 +240,30 @@ class SettingsWindow(QWidget):
         grid.addLayout(buttons, row, 0, 1, 2)
 
         self.resize(560, self.sizeHint().height())
+
+    def refresh_devices(self) -> None:
+        """(Re)enumerate microphones, keeping the current selection.
+
+        Must run on every open, not just the first: the window is cached and reused
+        (see ``open_settings``), so a list built once in ``__init__`` would show the
+        devices attached the first time Settings was ever opened and never change.
+        """
+        keep = self.mic.currentData() or self.cfg.audio_device
+        self.mic.blockSignals(True)  # repopulating would fire currentIndexChanged
+        try:
+            self.mic.clear()
+            self._mic_devs = []
+            for dev, label in platform.list_input_devices():
+                self.mic.addItem(label, dev)
+                self._mic_devs.append(dev)
+            if keep not in self._mic_devs:
+                # Configured mic is unplugged: keep it selectable so saving the
+                # window doesn't silently move the user to a different device.
+                self.mic.addItem(f"{keep} (not connected)", keep)
+                self._mic_devs.append(keep)
+            self.mic.setCurrentIndex(self._mic_devs.index(keep))
+        finally:
+            self.mic.blockSignals(False)
 
     def _open_permissions(self) -> None:
         from .ui_permissions import open_permissions_window

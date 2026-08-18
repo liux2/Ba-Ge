@@ -77,6 +77,36 @@ def _clear_hidden_flag(root: str) -> None:
             unhide(os.path.join(dirpath, name))
 
 
+# --- bounded calls (audio backends can wedge; nothing may block forever) ---
+
+def call_with_timeout(fn, timeout: float):
+    """Run ``fn()`` on a daemon thread; return ``(finished, result)``.
+
+    Used wherever a call can enter PortAudio/CoreAudio, which on macOS can deadlock
+    outright (see ba_ge/audio_sd.py). A timed-out worker is abandoned, never joined:
+    it is a daemon so it cannot hold the process open, and waiting on it would just
+    relocate the hang. Exceptions are re-raised on the calling thread.
+    """
+    import threading
+
+    box: dict = {}
+
+    def run():
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, name="bage-bounded-call", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        return False, None
+    if "error" in box:
+        raise box["error"]
+    return True, box.get("value")
+
+
 # --- audio + injection backends ---
 
 def make_recorder(config):
@@ -363,10 +393,39 @@ def _source_descriptions() -> dict[str, str]:
     return out
 
 
+def _refresh_portaudio(sd) -> None:
+    """Rebuild PortAudio's device snapshot so newly attached mics appear.
+
+    PortAudio enumerates devices once, inside ``Pa_Initialize`` — which sounddevice
+    runs at import — and ``query_devices()`` only reads that snapshot. So a mic
+    plugged in after the app started never shows up, no matter how often the list is
+    re-queried; only a terminate/initialise cycle rebuilds it.
+
+    Skipped while a capture stream is open, because ``Pa_Terminate`` would tear that
+    stream down — and on macOS that is precisely the stop path that can deadlock
+    (see ba_ge/audio_sd.py). Bounded for the same reason: this runs on the Qt main
+    thread when Settings opens, so a wedge here would freeze the UI.
+    """
+    from .audio_sd import capture_active
+
+    if capture_active():
+        log.info("skipping mic re-enumeration: capture is active")
+        return
+
+    def cycle():
+        sd._terminate()
+        sd._initialize()
+
+    finished, _ = call_with_timeout(cycle, 3.0)
+    if not finished:
+        log.error("PortAudio re-init stalled — mic list may be stale")
+
+
 def _sounddevice_inputs() -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     try:
         import sounddevice as sd
+        _refresh_portaudio(sd)
         for dev in sd.query_devices():
             if dev.get("max_input_channels", 0) > 0:
                 out.append((dev["name"], dev["name"]))

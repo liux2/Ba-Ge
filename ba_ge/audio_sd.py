@@ -4,11 +4,8 @@ Records raw S16_LE frames via PortAudio and serializes them to the SAME canonica
 16-bit mono WAV bytes the ``arecord`` backend produces, so downstream code
 (``peak_amplitude``, ``_wav_seconds``, ``transcribe``) is untouched.
 
-**The stream is opened once and left running for the process lifetime**; a hotkey
-press only arms/disarms buffering. This is not an optimisation — it is the fix for
-a hard deadlock. Calling ``stream.stop()`` per utterance intermittently wedged the
-whole app on macOS (observed twice in ~6h of real use), because PortAudio's
-CoreAudio backend inverts two locks:
+Calling ``stream.stop()`` intermittently wedges the whole app on macOS (observed
+twice in ~6h of real use), because PortAudio's CoreAudio backend inverts two locks:
 
 * the stopping thread holds the AudioUnit lock inside ``Pa_StopStream`` ->
   ``AudioOutputUnitStop`` and waits on the CoreAudio IO-context mutex
@@ -20,8 +17,8 @@ CoreAudio backend inverts two locks:
 Neither side can progress, and the recorder thread parks forever inside
 ``recorder.stop()`` — the app's state watchdog resets the indicator to idle, so the
 tray looks healthy while dictation is permanently dead and only SIGKILL clears it.
-Never issuing a per-utterance stop removes the window entirely. Arming/disarming
-touches no PortAudio entry point at all.
+Holding one stream open for the whole process would remove that window entirely,
+and this module used to do exactly that. It no longer does:
 
 **The microphone is released as soon as a recording ends** (``config.idle_release``
 = 0, the default), so the OS indicator is lit only while you are actually dictating.
@@ -62,13 +59,26 @@ from .audio import _WAV_HEADER_BYTES, _wav_seconds, is_too_short
 
 log = logging.getLogger("bage.audio_sd")
 
-# How long to wait for a PortAudio stop/close before abandoning it. Only reached on
-# shutdown or a device switch, never per utterance; see the module docstring.
+# How long to wait for a PortAudio stop/close before abandoning it. Hit once per
+# utterance now that the mic is released eagerly; see the module docstring.
 _CLOSE_TIMEOUT = 2.0
 
 
 class AudioError(Exception):
     pass
+
+
+# Number of capture streams this process currently holds open. Enumerating devices
+# re-initialises PortAudio, which would tear an open stream down mid-recording, so
+# `platform` consults this first.
+_open_streams = 0
+_open_lock = threading.Lock()
+
+
+def capture_active() -> bool:
+    """True while a capture stream is open (a recording, or a wedged close)."""
+    with _open_lock:
+        return _open_streams > 0
 
 
 def _to_wav(pcm: bytes, sample_rate: int, channels: int) -> bytes:
@@ -145,9 +155,12 @@ class SdRecorder:
                 except Exception:
                     log.debug("discarding half-open stream failed", exc_info=True)
             raise AudioError(f"could not open microphone: {exc}") from exc
+        global _open_streams
+        with _open_lock:
+            _open_streams += 1
         self._stream = stream
         self._open_device = device
-        log.info("capture stream open (device=%r) — held until quit", device)
+        log.info("capture stream open (device=%r)", device)
 
     def _close_stream(self) -> bool:
         """Stop+close the live stream, bounded by ``_CLOSE_TIMEOUT``.
@@ -168,15 +181,20 @@ class SdRecorder:
             except Exception:
                 log.debug("stream close failed", exc_info=True)
 
+        global _open_streams
         worker = threading.Thread(target=shut, name="bage-audio-close", daemon=True)
         worker.start()
         worker.join(_CLOSE_TIMEOUT)
         if worker.is_alive():
+            # NOT decremented: PortAudio still holds the device, so a device-list
+            # refresh must keep treating this process as busy.
             log.error("PortAudio did not close within %.1fs — abandoning the stream; "
                       "this process's audio is now unusable and needs a relaunch",
                       _CLOSE_TIMEOUT)
             self.stalled = True
             return False
+        with _open_lock:
+            _open_streams = max(0, _open_streams - 1)
         return True
 
     def close(self) -> bool:
