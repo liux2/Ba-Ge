@@ -12,6 +12,7 @@ Two properties are being pinned down, and they pull against each other:
 PortAudio is faked.
 """
 
+import array
 import sys
 import threading
 import time
@@ -54,27 +55,33 @@ class _FakeStream:
 
 
 class _FakeSd:
-    def __init__(self, hang_on_stop=False):
+    def __init__(self, hang_on_stop=False, max_input_channels=1):
         self.opened: list[_FakeStream] = []
         self._hang = hang_on_stop
+        self.max_input_channels = max_input_channels
 
     def RawInputStream(self, **kw):  # noqa: N802 - mirrors sounddevice's name
         stream = _FakeStream(hang_on_stop=self._hang, **kw)
         self.opened.append(stream)
         return stream
 
+    def query_devices(self, *a, **kw):
+        return {"max_input_channels": self.max_input_channels}
+
 
 class _SdPatch:
     """Install a fake ``sounddevice`` for the duration of a block."""
 
-    def __init__(self, hang_on_stop=False):
-        self.sd = _FakeSd(hang_on_stop)
+    def __init__(self, hang_on_stop=False, max_input_channels=1):
+        self.sd = _FakeSd(hang_on_stop, max_input_channels)
 
     def __enter__(self):
         self._saved = sys.modules.get("sounddevice")
         module = types.ModuleType("sounddevice")
         # Late-bound on purpose, so a test can swap in a failing opener afterwards.
         module.RawInputStream = lambda **kw: self.sd.RawInputStream(**kw)
+        module.query_devices = self.sd.query_devices
+        module.default = types.SimpleNamespace(device=(0, 0))
         sys.modules["sounddevice"] = module
         return self.sd
 
@@ -303,3 +310,59 @@ class CallWithTimeoutTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiChannelDeviceTest(unittest.TestCase):
+    """A 2-channel receiver can move the mic between slots; mono capture would
+    grab channel 1 and return DIGITAL SILENCE while the OS meter looks fine."""
+
+    @staticmethod
+    def _interleave(*channels):
+        out = array.array("h")
+        for frame in zip(*channels):
+            out.extend(frame)
+        return out.tobytes()
+
+    def test_picks_the_live_channel_when_audio_is_on_channel_2(self):
+        with _SdPatch(max_input_channels=2) as sd:
+            rec = SdRecorder(_cfg())
+            rec.start()
+            self.assertEqual(rec._capture_ch, 2)  # opened wide, not mono
+            silent = [0] * 16000
+            live = [10000, -10000] * 8000
+            sd.opened[0].feed(self._interleave(silent, live))
+            wav = rec.stop()
+        self.assertEqual(peak_amplitude(wav), 10000)  # would have been 0 before
+
+    def test_picks_channel_1_when_that_is_the_live_one(self):
+        with _SdPatch(max_input_channels=2) as sd:
+            rec = SdRecorder(_cfg())
+            rec.start()
+            sd.opened[0].feed(self._interleave([500, -500] * 8000, [0] * 16000))
+            wav = rec.stop()
+        self.assertEqual(peak_amplitude(wav), 500)
+
+    def test_mono_device_is_untouched(self):
+        with _SdPatch(max_input_channels=1) as sd:
+            rec = SdRecorder(_cfg())
+            rec.start()
+            self.assertEqual(rec._capture_ch, 1)
+            sd.opened[0].feed(b"\x10\x27" * 16000)
+            wav = rec.stop()
+        self.assertEqual(peak_amplitude(wav), 10000)
+
+    def test_dual_mono_is_not_summed_into_clipping(self):
+        loud = [30000, -30000] * 8000
+        with _SdPatch(max_input_channels=2) as sd:
+            rec = SdRecorder(_cfg())
+            rec.start()
+            sd.opened[0].feed(self._interleave(loud, loud))
+            wav = rec.stop()
+        self.assertEqual(peak_amplitude(wav), 30000)  # not 60000/clipped
+
+    def test_channel_count_is_capped(self):
+        with _SdPatch(max_input_channels=64) as sd:
+            rec = SdRecorder(_cfg())
+            rec.start()
+            self.assertLessEqual(rec._capture_ch, 8)
+            rec.stop()

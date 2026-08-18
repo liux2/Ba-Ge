@@ -62,6 +62,16 @@ with a custom-vocabulary (`keyterms`) dictionary.
       `app.py` also bounds
       `recorder.stop()` with `_STOP_TIMEOUT` so any future audio stall surfaces as a
       visible error instead of a silent zombie.
+  - ✅ **multi-channel capture** (`audio_sd._pick_loudest_channel`): a 2-channel USB
+    receiver puts the mic on whichever slot it likes and can MOVE it (re-pairing a
+    transmitter). Capturing `channels=1` silently takes channel 1, so when the audio
+    sits on channel 2 the app gets **exact digital zeros** while the macOS input
+    meter — which watches every channel — looks perfectly healthy; the user
+    reasonably insists the mic is fine and the app looks wrong. Real case: the same
+    receiver had audio on ch1 at noon and ch2 by afternoon. Now the stream opens with
+    every input channel the device reports (capped at 8) and `stop()` keeps the
+    LOUDEST channel — not a sum (dual-mono would clip) and not an average (costs 6 dB
+    when only one channel is live). The chosen channel is logged.
   - ✅ **input-level guard** (`audio.level_stats` + `app._warn_about_levels`): the
     silence floor alone can't catch a mic driven into the rails — clipped audio is
     LOUD, just destroyed, so Scribe returns confident nonsense ("page 4" -> "H4")

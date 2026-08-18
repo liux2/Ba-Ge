@@ -49,6 +49,7 @@ buffers).
 
 from __future__ import annotations
 
+import array
 import io
 import logging
 import threading
@@ -62,6 +63,14 @@ log = logging.getLogger("bage.audio_sd")
 # How long to wait for a PortAudio stop/close before abandoning it. Hit once per
 # utterance now that the mic is released eagerly; see the module docstring.
 _CLOSE_TIMEOUT = 2.0
+
+# Multi-input devices put the mic on whichever channel they feel like: a 2-channel
+# wireless receiver can move it between slots when a transmitter is re-paired, and
+# capturing mono then silently grabs channel 1 and yields DIGITAL SILENCE while the
+# OS meter (which watches every channel) looks perfectly healthy. So capture every
+# channel the device offers and pick the live one. Capped so a pro interface with
+# dozens of inputs doesn't make us haul useless audio around.
+_MAX_CAPTURE_CHANNELS = 8
 
 
 class AudioError(Exception):
@@ -79,6 +88,25 @@ def capture_active() -> bool:
     """True while a capture stream is open (a recording, or a wedged close)."""
     with _open_lock:
         return _open_streams > 0
+
+
+def _pick_loudest_channel(pcm: bytes, in_channels: int) -> tuple[bytes, int, list[int]]:
+    """Deinterleave ``pcm`` and return (mono_bytes, chosen_index, per-channel peaks).
+
+    Loudest rather than summed on purpose: summing doubles a dual-mono device into
+    clipping, and averaging costs 6 dB when only one channel is live — which is the
+    case this exists for.
+    """
+    if in_channels <= 1:
+        return pcm, 0, []
+    samples = array.array("h")
+    samples.frombytes(pcm[:len(pcm) // (2 * in_channels) * 2 * in_channels])
+    peaks = []
+    for c in range(in_channels):
+        chan = samples[c::in_channels]
+        peaks.append(max(max(chan), -min(chan)) if chan else 0)
+    best = peaks.index(max(peaks)) if peaks else 0
+    return samples[best::in_channels].tobytes(), best, peaks
 
 
 def _to_wav(pcm: bytes, sample_rate: int, channels: int) -> bytes:
@@ -100,6 +128,7 @@ class SdRecorder:
         self._armed = False
         self._start = 0.0
         self._idle_timer: threading.Timer | None = None
+        self._capture_ch = config.channels  # channels the live stream was opened with
         self._lock = threading.Lock()
         # Set when a stop/close wedged: this process's CoreAudio is then poisoned
         # and only a relaunch clears it. app.py checks this after every recording.
@@ -108,6 +137,18 @@ class SdRecorder:
     def _resolve_device(self):
         dev = self.config.audio_device
         return None if dev in ("", "default", "pipewire", "pulse") else dev
+
+    def _capture_channels(self, device) -> int:
+        """How many channels to open: every input the device has, within reason."""
+        wanted = self.config.channels
+        try:
+            import sounddevice as sd
+            info = sd.query_devices(sd.default.device[0] if device is None else device)
+            max_in = int(info.get("max_input_channels", wanted))
+        except Exception:
+            log.debug("could not probe channel count for %r", device, exc_info=True)
+            return wanted
+        return max(wanted, min(max_in, _MAX_CAPTURE_CHANNELS))
 
     # ---- stream lifecycle (opened once, then left running) ----
 
@@ -136,11 +177,12 @@ class SdRecorder:
 
         import sounddevice as sd
 
+        channels = self._capture_channels(device)
         stream = None
         try:
             stream = sd.RawInputStream(
                 samplerate=self.config.sample_rate,
-                channels=self.config.channels,
+                channels=channels,
                 dtype="int16",
                 device=device,
                 callback=self._callback,
@@ -160,7 +202,8 @@ class SdRecorder:
             _open_streams += 1
         self._stream = stream
         self._open_device = device
-        log.info("capture stream open (device=%r)", device)
+        self._capture_ch = channels
+        log.info("capture stream open (device=%r, channels=%d)", device, channels)
 
     def _close_stream(self) -> bool:
         """Stop+close the live stream, bounded by ``_CLOSE_TIMEOUT``.
@@ -259,6 +302,12 @@ class SdRecorder:
         pcm = b"".join(chunks)
         if not pcm:
             return None
+        if self._capture_ch > self.config.channels:
+            pcm, chosen, peaks = _pick_loudest_channel(pcm, self._capture_ch)
+            if peaks and sorted(peaks)[-1] > 0 and chosen != 0:
+                # Worth saying out loud: capturing mono would have returned silence.
+                log.info("using input channel %d of %d (peaks=%s)",
+                         chosen + 1, self._capture_ch, peaks)
         data = _to_wav(pcm, self.config.sample_rate, self.config.channels)
         if len(data) <= _WAV_HEADER_BYTES:
             return None
