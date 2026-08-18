@@ -143,6 +143,9 @@ class DictationApp:
             self.recorder.start()
         except AudioError as exc:
             self._fail(str(exc))
+            # A failed OPEN poisons the process just as a wedged close does — most
+            # often after sleep/wake. Recover rather than sit here looking healthy.
+            self._recover_if_audio_stalled()
             return
         self._indicate(State.RECORDING)
 

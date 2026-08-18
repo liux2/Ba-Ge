@@ -175,6 +175,29 @@ class SdRecorder:
             # Device switched in Settings, or the stream died (mic unplugged).
             self._close_stream()
 
+        self._open_stream(device)
+
+    def _reinit_portaudio(self) -> bool:
+        """Rebuild PortAudio's state after the OS pulled CoreAudio out from under it.
+
+        Bounded, because terminate/initialise reaches into the same CoreAudio layer
+        that can deadlock. Skipped if any capture stream is open — tearing one down
+        mid-recording would be worse than the failure we are recovering from.
+        """
+        if capture_active():
+            return False
+        try:
+            import sounddevice as sd
+
+            from . import platform
+            finished, _ = platform.call_with_timeout(
+                lambda: (sd._terminate(), sd._initialize()), 3.0)
+            return bool(finished)
+        except Exception:
+            log.debug("PortAudio re-init failed", exc_info=True)
+            return False
+
+    def _open_stream(self, device, retry: bool = False) -> None:
         import sounddevice as sd
 
         channels = self._capture_channels(device)
@@ -196,6 +219,15 @@ class SdRecorder:
                     stream.close()
                 except Exception:
                     log.debug("discarding half-open stream failed", exc_info=True)
+            if not retry and self._reinit_portaudio():
+                # Sleep/wake tears CoreAudio down underneath PortAudio, whose cached
+                # HAL state then fails every open with paInternalError even though a
+                # fresh process opens the same device fine. Re-initialising clears it,
+                # so the user never sees the wake glitch.
+                log.warning("microphone open failed (%s) — re-initialised PortAudio, "
+                            "retrying", exc)
+                return self._open_stream(device, retry=True)
+            self.stalled = True  # unrecoverable in-process; app.py will relaunch
             raise AudioError(f"could not open microphone: {exc}") from exc
         global _open_streams
         with _open_lock:

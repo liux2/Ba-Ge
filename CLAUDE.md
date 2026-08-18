@@ -62,6 +62,14 @@ with a custom-vocabulary (`keyterms`) dictionary.
       `app.py` also bounds
       `recorder.stop()` with `_STOP_TIMEOUT` so any future audio stall surfaces as a
       visible error instead of a silent zombie.
+  - ✅ **sleep/wake recovery** (`audio_sd._reinit_portaudio`): macOS tears CoreAudio
+    down over sleep, and PortAudio's cached HAL state then fails EVERY open with
+    `paInternalError` (-9986) — while a fresh process opens the same device fine, so
+    the app looks alive with the tray healthy and dictation permanently dead. On an
+    open failure it now cycles `sd._terminate()/_initialize()` once and retries
+    (bounded, and skipped while a capture is open); only if that fails does it set
+    `stalled` and let `app.py` relaunch. `_begin_recording` checks `stalled` too — a
+    failed OPEN poisons the process exactly as a wedged CLOSE does.
   - ✅ **multi-channel capture** (`audio_sd._pick_loudest_channel`): a 2-channel USB
     receiver puts the mic on whichever slot it likes and can MOVE it (re-pairing a
     transmitter). Capturing `channels=1` silently takes channel 1, so when the audio

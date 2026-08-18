@@ -366,3 +366,92 @@ class MultiChannelDeviceTest(unittest.TestCase):
             rec.start()
             self.assertLessEqual(rec._capture_ch, 8)
             rec.stop()
+
+
+class WakeRecoveryTest(unittest.TestCase):
+    """Sleep/wake tears CoreAudio down under PortAudio: every open then fails with
+    paInternalError even though a fresh process opens the same device fine."""
+
+    def setUp(self):
+        # A previously wedged close leaves the counter pinned on purpose; reset it
+        # so these tests aren't suppressed by leakage from another case.
+        import ba_ge.audio_sd as mod
+        mod._open_streams = 0
+
+    @staticmethod
+    def _poison(mod, fails):
+        """Make opens fail until _initialize() is called again."""
+        state = {"fails": fails, "reinits": 0, "terminates": 0}
+        good = mod.RawInputStream
+
+        def opener(**kw):
+            if state["fails"] > 0:
+                state["fails"] -= 1
+                raise RuntimeError("Internal PortAudio error [PaErrorCode -9986]")
+            return good(**kw)
+
+        def initialize():
+            state["reinits"] += 1
+            state["fails"] = 0          # re-init clears the poisoned state
+
+        mod.RawInputStream = opener
+        mod._terminate = lambda: state.__setitem__("terminates", state["terminates"]+1)
+        mod._initialize = initialize
+        return state
+
+    def test_recovers_by_reinitialising_portaudio(self):
+        with _SdPatch():
+            state = self._poison(sys.modules["sounddevice"], fails=1)
+            rec = SdRecorder(_cfg())
+            rec.start()                      # succeeds via the retry
+            self.assertEqual(state["terminates"], 1)
+            self.assertEqual(state["reinits"], 1)
+            self.assertFalse(rec.stalled)    # recovered; no relaunch needed
+            rec.stop()
+
+    def test_gives_up_and_flags_for_relaunch_when_reinit_does_not_help(self):
+        with _SdPatch():
+            state = self._poison(sys.modules["sounddevice"], fails=99)
+            state["fails"] = 99
+            mod = sys.modules["sounddevice"]
+            mod._initialize = lambda: None   # re-init does NOT clear it
+            rec = SdRecorder(_cfg())
+            with self.assertRaises(AudioError):
+                rec.start()
+            self.assertTrue(rec.stalled)     # app.py will relaunch
+
+    def test_retries_only_once(self):
+        """No infinite reopen loop when the device is genuinely gone."""
+        with _SdPatch():
+            attempts = []
+            mod = sys.modules["sounddevice"]
+            def always_fail(**kw):
+                attempts.append(1)
+                raise RuntimeError("Internal PortAudio error [PaErrorCode -9986]")
+            mod.RawInputStream = always_fail
+            mod._terminate = lambda: None
+            mod._initialize = lambda: None
+            rec = SdRecorder(_cfg())
+            with self.assertRaises(AudioError):
+                rec.start()
+            self.assertEqual(len(attempts), 2)  # original + one retry
+
+    def test_reinit_is_skipped_while_a_capture_is_open(self):
+        """Tearing PortAudio down mid-recording is worse than the failure."""
+        import ba_ge.audio_sd as mod
+        with _SdPatch():
+            calls = []
+            sdmod = sys.modules["sounddevice"]
+            def always_fail(**kw):
+                raise RuntimeError("Internal PortAudio error [PaErrorCode -9986]")
+            sdmod.RawInputStream = always_fail
+            sdmod._terminate = lambda: calls.append("terminate")
+            sdmod._initialize = lambda: calls.append("initialize")
+            mod._open_streams = 1            # another stream is live
+            try:
+                rec = SdRecorder(_cfg())
+                with self.assertRaises(AudioError):
+                    rec.start()
+                self.assertEqual(calls, [])  # never touched PortAudio
+            finally:
+                mod._open_streams = 0
