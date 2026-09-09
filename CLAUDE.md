@@ -10,16 +10,17 @@ with a custom-vocabulary (`keyterms`) dictionary.
   injection (X11; Qt clipboard manager preserves the board + keeps history, and the
   Ctrl+(Shift+)V keystroke is sent via **uinput** — see the note below) · Qt tray +
   settings/transcript windows · ElevenLabs Scribe.
-  - **Injection note (hard-won):** split by target in `inject.py::type_text`.
-    GTK terminals (Ghostty) intermittently **encode even a real-device (uinput)
-    Ctrl+Shift+V as a CSI-u key** instead of firing the paste keybind — the modifiers
-    ARE present (mod code 6), so no key-timing trick fixes it; it's Ghostty's call.
-    So **terminals are TYPED** (`_type_via_uinput`: uinput char events reach the PTY
-    normally — reliable + clipboard-free) for ASCII-mappable text; **GUI apps and
-    non-typeable text (CJK — Scribe is bilingual!) are PASTED** (Qt clipboard + uinput
-    Ctrl+V, sent OFF the Qt main thread so the loop can serve the SelectionRequest).
-    uinput via `evdev` (`/dev/uinput`, udev `uaccess` ACL — no `input` group/re-login).
-    pynput/XTEST is the last-resort fallback (GUI only).
+  - **Injection note (hard-won):** everything is **PASTED** in `inject.py::type_text`
+    (Qt clipboard + uinput Ctrl+V for GUI apps, Ctrl+Shift+V for terminals), sent OFF
+    the Qt main thread so the loop can serve the target's SelectionRequest. uinput via
+    `evdev` (`/dev/uinput`, udev `uaccess` ACL — no `input` group/re-login); pynput/XTEST
+    is the last-resort fallback (GUI only). **No character typing** — the user rejected
+    it outright (drops spaces at speed; slow when made reliable), so the type path was
+    removed. Known cost of paste-only: GTK terminals (Ghostty) occasionally **encode
+    even a real-device Ctrl+Shift+V as a CSI-u key** instead of firing the paste keybind
+    (modifiers ARE present, mod code 6 — Ghostty's call, no key-timing trick fixes it),
+    and a TUI that swallows Ctrl+Shift+V (e.g. OpenCode) won't receive the paste —
+    accepted; paste there manually. CJK (Scribe is bilingual!) can only ever be pasted.
 - **Cross-platform port: Linux + macOS run on hardware; Windows UNVERIFIED.**
   - ✅ `platform.py` factory (the only `sys.platform` in core) — `make_recorder`,
     `make_injector`, `list_input_devices`, `ffmpeg_exe`, `missing_permissions`.
