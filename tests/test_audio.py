@@ -1,8 +1,15 @@
+import array
+import io
 import struct
 import unittest
+import wave
+from unittest import mock
 
 from ba_ge.audio import (
+    _capture_channels,
+    _downmix_loudest,
     _patch_wav_sizes,
+    _source_channels,
     _wav_seconds,
     arecord_env,
     build_arecord_cmd,
@@ -23,6 +30,22 @@ def _wav(data_bytes: int) -> bytes:
     header[36:40] = b"data"
     struct.pack_into("<I", header, 40, 0x7FFFFF00)
     return bytes(header) + b"\x00" * data_bytes
+
+
+def _multichannel_wav(channels: list[list[int]], rate: int = 16000) -> bytes:
+    """A real PCM WAV built by interleaving per-channel sample lists (equal length)."""
+    n = len(channels[0])
+    inter = array.array("h")
+    for i in range(n):
+        for ch in channels:
+            inter.append(ch[i])
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(len(channels))
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(inter.tobytes())
+    return buf.getvalue()
 
 
 class AudioTest(unittest.TestCase):
@@ -56,6 +79,73 @@ class AudioTest(unittest.TestCase):
             cmd = build_arecord_cmd(Config(audio_device=dev), "/tmp/a.wav")
             self.assertEqual(cmd[cmd.index("-D") + 1], dev)
             self.assertNotIn("PULSE_SOURCE", arecord_env(Config(audio_device=dev), base={}))
+
+    # ---- multi-channel receiver (e.g. DJI dual wireless): keep the loudest ----
+
+    def test_downmix_keeps_loud_channel_when_mic_switched(self):
+        # TX1 on ch0 went silent; user switched to TX2 on ch1 (loud). Capturing a
+        # single channel would keep ch0 (silence) — the reported bug. We must keep ch1.
+        n = 200
+        wav = _multichannel_wav([[0] * n, [12000] * n])
+        mono, chosen = _downmix_loudest(wav)
+        self.assertEqual(chosen, 1)
+        self.assertEqual(peak_amplitude(mono), 12000)  # the live mic, not silence
+        self.assertEqual(struct.unpack_from("<H", mono, 22)[0], 1)  # output is mono
+
+    def test_downmix_keeps_channel_zero_when_loudest(self):
+        n = 200
+        wav = _multichannel_wav([[9000] * n, [3] * n])
+        mono, chosen = _downmix_loudest(wav)
+        self.assertEqual(chosen, 0)
+        self.assertEqual(peak_amplitude(mono), 9000)
+
+    def test_downmix_is_noop_for_mono(self):
+        wav = _multichannel_wav([[100] * 50])
+        mono, chosen = _downmix_loudest(wav)
+        self.assertEqual(chosen, -1)
+        self.assertEqual(mono, wav)
+
+    def test_downmix_ignores_non_wav(self):
+        junk = b"not a wav" + b"\x00" * 60
+        mono, chosen = _downmix_loudest(junk)
+        self.assertEqual(chosen, -1)
+        self.assertEqual(mono, junk)
+
+    def test_capture_channels_expands_pulse_source(self):
+        name = "alsa_input.usb-DJI_Wireless_Mic_Rx-01.analog-stereo"
+        with mock.patch("ba_ge.audio._source_channels", return_value=2):
+            self.assertEqual(_capture_channels(Config(audio_device=name, channels=1)), 2)
+
+    def test_capture_channels_pulse_defaults_to_two_without_pactl(self):
+        name = "alsa_input.usb-Some_Mic-01.analog-stereo"
+        with mock.patch("ba_ge.audio._source_channels", return_value=None):
+            self.assertEqual(_capture_channels(Config(audio_device=name, channels=1)), 2)
+
+    def test_capture_channels_raw_alsa_unchanged(self):
+        self.assertEqual(_capture_channels(Config(audio_device="plughw:1,0", channels=1)), 1)
+
+    def test_capture_channels_default_device_unchanged(self):
+        self.assertEqual(_capture_channels(Config(audio_device="default", channels=1)), 1)
+
+    def test_source_channels_parses_pactl_short_list(self):
+        name = "alsa_input.usb-DJI_Technology-01.analog-stereo"
+        listing = (
+            f"53\talsa_output.pci.monitor\tPipeWire\ts16le 2ch 48000Hz\tSUSPENDED\n"
+            f"2725\t{name}\tPipeWire\ts24le 2ch 48000Hz\tSUSPENDED\n"
+        )
+        completed = mock.Mock(stdout=listing)
+        with mock.patch("ba_ge.audio.subprocess.run", return_value=completed):
+            self.assertEqual(_source_channels(name), 2)
+
+    def test_source_channels_none_when_pactl_missing(self):
+        name = "alsa_input.usb-DJI-01.analog-stereo"
+        with mock.patch("ba_ge.audio.subprocess.run", side_effect=FileNotFoundError):
+            self.assertIsNone(_source_channels(name))
+
+    def test_build_arecord_cmd_honours_explicit_channels(self):
+        cfg = Config(audio_device="default", channels=1)
+        cmd = build_arecord_cmd(cfg, "/tmp/x.wav", channels=2)
+        self.assertEqual(cmd[cmd.index("-c") + 1], "2")
 
     def test_is_too_short(self):
         self.assertTrue(is_too_short(0.1, 0.3))

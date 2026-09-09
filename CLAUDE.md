@@ -21,6 +21,13 @@ with a custom-vocabulary (`keyterms`) dictionary.
     (modifiers ARE present, mod code 6 — Ghostty's call, no key-timing trick fixes it),
     and a TUI that swallows Ctrl+Shift+V (e.g. OpenCode) won't receive the paste —
     accepted; paste there manually. CJK (Scribe is bilingual!) can only ever be pasted.
+  - **Multi-channel note (Linux too):** a dual wireless receiver (e.g. DJI) exposes
+    each transmitter on its own channel of a 2-channel source; capturing one channel
+    silently drops whichever mic you switched to (records that channel's near-silence
+    → Scribe returns nothing). `audio.py` now probes the source's channel count
+    (`_source_channels` via `pactl`, default 2 for pulse sources) so `arecord` opens
+    every channel, and `stop()` keeps the LOUDEST (`_downmix_loudest`) → mono — the
+    same policy as the mac/win `audio_sd._pick_loudest_channel`.
 - **Cross-platform port: Linux + macOS run on hardware; Windows UNVERIFIED.**
   - ✅ `platform.py` factory (the only `sys.platform` in core) — `make_recorder`,
     `make_injector`, `list_input_devices`, `ffmpeg_exe`, `missing_permissions`.
