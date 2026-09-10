@@ -321,6 +321,19 @@ class Recorder:
             self._unlink(path)
 
         if not data or len(data) <= _WAV_HEADER_BYTES:
+            # Held long enough to expect audio but captured nothing: arecord failed
+            # (mic muted, device unplugged/wedged, or the capture stream timed out).
+            # Silently returning None here is what turns a muted mic into a mystery
+            # ("icon lit, nothing appeared"), so surface WHY.
+            if wall >= self.config.min_duration:
+                err = self._read_stderr(proc)
+                log.warning("no audio captured in %.1fs (arecord rc=%s): %s",
+                            wall, getattr(proc, "returncode", None), err or "(no stderr)")
+                raise AudioError(
+                    "No audio from the microphone — it may be muted, unplugged, or "
+                    "the audio service needs a restart. Check the mic isn't muted; if "
+                    "it persists, replug the device or run: systemctl --user restart "
+                    "wireplumber pipewire pipewire-pulse")
             return None
         if not clean:
             log.warning("arecord did not stop cleanly; repairing WAV header")
@@ -341,6 +354,16 @@ class Recorder:
             log.info("discarded %.2fs tap (< %.2fs)", seconds, self.config.min_duration)
             return None
         return data
+
+    @staticmethod
+    def _read_stderr(proc) -> str:
+        """arecord's stderr (why it failed); '' if unavailable. proc is already dead."""
+        try:
+            if proc.stderr is not None:
+                return proc.stderr.read().decode("utf-8", "replace").strip()
+        except Exception:
+            pass
+        return ""
 
     def _unlink(self, path: str | None = None) -> None:
         if path:

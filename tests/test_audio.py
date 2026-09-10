@@ -1,11 +1,16 @@
 import array
 import io
+import os
 import struct
+import tempfile
+import time
 import unittest
 import wave
 from unittest import mock
 
 from ba_ge.audio import (
+    AudioError,
+    Recorder,
     _capture_channels,
     _downmix_loudest,
     _patch_wav_sizes,
@@ -17,6 +22,27 @@ from ba_ge.audio import (
     peak_amplitude,
 )
 from ba_ge.config import Config
+
+
+class _FakeProc:
+    """Stands in for a finished arecord Popen (already signalled/waited)."""
+
+    def __init__(self, stderr=b"", rc=0):
+        self.returncode = rc
+        self.stderr = io.BytesIO(stderr)
+        self.signals = []
+
+    def send_signal(self, sig):
+        self.signals.append(sig)
+
+    def wait(self, timeout=None):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
 
 
 def _wav(data_bytes: int) -> bytes:
@@ -146,6 +172,31 @@ class AudioTest(unittest.TestCase):
         cfg = Config(audio_device="default", channels=1)
         cmd = build_arecord_cmd(cfg, "/tmp/x.wav", channels=2)
         self.assertEqual(cmd[cmd.index("-c") + 1], "2")
+
+    # ---- empty capture must be visible, not silent ----
+
+    def _recorder_with_empty_capture(self, wall, stderr=b"Unable to create stream: Timeout"):
+        rec = Recorder(Config(min_duration=0.3))
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        with open(path, "wb") as fh:
+            fh.write(_wav(0))  # 44-byte header, no audio frames
+        rec._proc = _FakeProc(stderr=stderr, rc=1)
+        rec._path = path
+        rec._start = time.monotonic() - wall
+        return rec
+
+    def test_empty_capture_after_holding_raises_actionable_error(self):
+        # Held well past min_duration but got no audio -> mic muted / device wedged.
+        rec = self._recorder_with_empty_capture(wall=1.0)
+        with self.assertRaises(AudioError) as cm:
+            rec.stop()
+        self.assertIn("microphone", str(cm.exception).lower())
+
+    def test_empty_capture_after_quick_tap_is_silent_none(self):
+        # A genuine sub-min_duration tap is normal; must NOT raise/notify.
+        rec = self._recorder_with_empty_capture(wall=0.05)
+        self.assertIsNone(rec.stop())
 
     def test_is_too_short(self):
         self.assertTrue(is_too_short(0.1, 0.3))
