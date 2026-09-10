@@ -100,20 +100,19 @@ def _source_channels(device: str) -> int | None:
 
 
 def _capture_channels(config) -> int:
-    """How many channels arecord should open.
+    """How many channels arecord should open — currently the configured count.
 
-    A multi-mic wireless receiver (e.g. a DJI dual kit) puts each transmitter on its
-    OWN channel of a 2-channel source. Capturing a single channel silently drops
-    whichever mic the user switched to — the app records that channel's near-silence
-    and Scribe returns nothing. So for a PipeWire/Pulse source we open every channel
-    it exposes (probed via pactl; defaulting to 2 when the probe can't run) and let
-    `stop()` keep the loudest — mirroring the macOS/Windows backend. Raw ALSA /
-    default devices keep the configured count (we can't assume they support more).
+    A multi-mic receiver (e.g. a DJI dual kit) puts each transmitter on its own
+    channel, so keeping only one channel drops whichever mic the user switched to.
+    The obvious fix — open the source at 2 channels via ``arecord -D pulse -c 2`` —
+    does NOT work while also resampling: the ALSA `pulse` plugin fails to create the
+    stream ("Unable to install hw params, CHANNELS: 2") and capture returns EMPTY,
+    breaking every mic. Opening at the source's NATIVE rate does work, so the real
+    multi-channel path is native-rate capture + in-process resample; until that
+    lands we keep the working single-channel behaviour. `_downmix_loudest` /
+    `_source_channels` stay in place for that follow-up (harmless no-ops on mono).
     """
-    if not _is_pulse_source(config.audio_device):
-        return config.channels
-    detected = _source_channels(config.audio_device) or 2
-    return max(config.channels, min(detected, _MAX_CAPTURE_CHANNELS))
+    return config.channels
 
 
 def arecord_env(config, base=None) -> dict:

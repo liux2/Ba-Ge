@@ -111,21 +111,21 @@ class AudioTest(unittest.TestCase):
         self.assertEqual(chosen, -1)
         self.assertEqual(mono, junk)
 
-    def test_capture_channels_expands_pulse_source(self):
+    def test_capture_channels_does_not_expand_pulse_source(self):
+        # arecord -D pulse -c 2 fails to open while resampling, so we must NOT force
+        # extra channels here — that broke capture entirely. Multi-channel is a
+        # native-rate follow-up (see _capture_channels docstring).
         name = "alsa_input.usb-DJI_Wireless_Mic_Rx-01.analog-stereo"
-        with mock.patch("ba_ge.audio._source_channels", return_value=2):
-            self.assertEqual(_capture_channels(Config(audio_device=name, channels=1)), 2)
-
-    def test_capture_channels_pulse_defaults_to_two_without_pactl(self):
-        name = "alsa_input.usb-Some_Mic-01.analog-stereo"
-        with mock.patch("ba_ge.audio._source_channels", return_value=None):
-            self.assertEqual(_capture_channels(Config(audio_device=name, channels=1)), 2)
+        self.assertEqual(_capture_channels(Config(audio_device=name, channels=1)), 1)
 
     def test_capture_channels_raw_alsa_unchanged(self):
         self.assertEqual(_capture_channels(Config(audio_device="plughw:1,0", channels=1)), 1)
 
     def test_capture_channels_default_device_unchanged(self):
         self.assertEqual(_capture_channels(Config(audio_device="default", channels=1)), 1)
+
+    def test_capture_channels_honours_explicit_config(self):
+        self.assertEqual(_capture_channels(Config(audio_device="default", channels=2)), 2)
 
     def test_source_channels_parses_pactl_short_list(self):
         name = "alsa_input.usb-DJI_Technology-01.analog-stereo"
