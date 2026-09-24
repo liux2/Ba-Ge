@@ -68,6 +68,12 @@ class HoldDebouncer:
         if fire:
             self._safe(self._on_stop)
 
+    @property
+    def held(self) -> bool:
+        """True while a hold is in progress with no release pending."""
+        with self._lock:
+            return self._held and self._pending is None
+
     def cancel(self) -> None:
         """Drop any pending stop without firing (used on shutdown)."""
         with self._lock:

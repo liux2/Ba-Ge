@@ -1,15 +1,20 @@
 """Application wiring: hotkey -> record -> transcribe -> inject, with a state machine.
 
 Threading model:
-  * main thread     : indicator main loop (GTK) or a blocking wait (notify mode)
-  * hotkey thread   : pynput listener -> on_press / on_release
-  * worker thread   : _process() (stop recording, transcribe, inject) off the UI thread
+  * main thread     : Qt event loop (tray, windows)
+  * hotkey thread   : pynput listener -> on_press / on_release, which only enqueue
+  * hotkey worker   : one serial thread running press/release actions in order —
+                      including opening the mic, which must never run on the
+                      listener thread (on macOS that is the event-tap thread, and a
+                      slow callback there gets the tap disabled by the OS)
+  * process thread  : _process() (stop recording, transcribe, inject) per utterance
 State transitions are guarded by a lock; indicator updates happen outside the lock.
 """
 
 from __future__ import annotations
 
 import logging
+import queue
 import sys
 import threading
 import time
@@ -30,6 +35,13 @@ _ERROR_RESET_DELAY = 2.0  # seconds before the ERROR indicator reverts to IDLE
 _SILENCE_PEAK = 64        # peak below this (of 32767) means the clip is silent
 _BUSY_TIMEOUT = 90.0      # force-recover if processing hangs this long (never stay stuck)
 _STOP_TIMEOUT = 5.0       # audio backend must hand back the clip within this
+_START_TIMEOUT = 10.0     # opening the mic must finish within this (Bluetooth is slow)
+# Longest single recording. Nothing else ends a recording whose key-up was lost, and
+# until it ends the mic stays open (OS indicator lit) and the hotkey stays deaf.
+_MAX_RECORDING = 300.0
+# An audio relaunch that recurs this soon means the fault is outside this process
+# (the device or the OS audio server); relaunching again would only loop.
+_RELAUNCH_GUARD = 60.0
 
 # Input-level guards. A clip driven into the rails is destroyed but LOUD, so the
 # silence floor never catches it — the model just returns confident nonsense and the
@@ -83,7 +95,10 @@ class DictationApp:
         self._hotkey = None
         self._error_timer = None
         self._busy_watchdog = None
+        self._record_timer = None
         self._last_level_warn = 0.0
+        self._actions: queue.SimpleQueue = queue.SimpleQueue()
+        self._action_worker = None
 
     @property
     def state(self) -> State:
@@ -102,6 +117,39 @@ class DictationApp:
     # ---- hotkey callbacks (run on the pynput listener thread) ----
 
     def on_press(self) -> None:
+        self._submit(self._handle_press)
+
+    def on_release(self) -> None:
+        self._submit(self._handle_release)
+
+    def _submit(self, action) -> None:
+        """Run ``action`` on the serial hotkey worker (inline when not async).
+
+        The listener thread must return at once: on macOS it is the event-tap
+        thread, and opening the mic there (~80 ms normally, seconds after a wake or
+        on Bluetooth) is how a key-up gets lost for good. One serial worker keeps
+        press/release order, so a release that arrives during a slow start ends the
+        recording right after the start instead of being dropped.
+        """
+        if not self.run_async:
+            action()
+            return
+        self._actions.put(action)
+        with self._lock:
+            if self._action_worker is None:
+                self._action_worker = threading.Thread(
+                    target=self._run_actions, name="bage-hotkey-worker", daemon=True)
+                self._action_worker.start()
+
+    def _run_actions(self) -> None:
+        while True:
+            action = self._actions.get()
+            try:
+                action()
+            except Exception:  # pragma: no cover - defensive; never kill the worker
+                log.exception("hotkey action failed")
+
+    def _handle_press(self) -> None:
         # In toggle mode the hotkey's leading edge flips recording on/off; the
         # trailing edge (on_release) is ignored. In hold mode press starts.
         if self.config.hotkey_mode == "toggle":
@@ -114,7 +162,7 @@ class DictationApp:
             return
         self._begin_recording()
 
-    def on_release(self) -> None:
+    def _handle_release(self) -> None:
         if self.config.hotkey_mode == "toggle":
             return  # a tap-release must not stop a toggle recording
         self._end_recording()
@@ -139,21 +187,42 @@ class DictationApp:
             self._schedule_idle_reset()
             return
 
+        if getattr(self.recorder, "stalled", False):
+            # Audio already known dead (e.g. a close wedged after the last clip):
+            # opening would fail or hang, and the stuck stream keeps the mic lit.
+            with self._lock:
+                self._state = State.IDLE
+            self._recover_if_audio_stalled()
+            return
+
+        began = time.monotonic()
         try:
-            self.recorder.start()
-        except AudioError as exc:
-            self._fail(str(exc))
+            finished, _ = platform.call_with_timeout(self.recorder.start, _START_TIMEOUT)
+            if not finished:
+                self._mark_audio_stalled(
+                    f"microphone open did not return within {_START_TIMEOUT:.0f}s")
+                raise AudioError("The microphone did not open — the audio system "
+                                 "is stuck.")
+        except Exception as exc:
+            # Any exception, not only AudioError: one escaping here would leave the
+            # state RECORDING with no stream behind it and no error shown.
+            if not isinstance(exc, AudioError):
+                log.error("could not start recording", exc_info=True)
+            self._fail(str(exc) or type(exc).__name__)
             # A failed OPEN poisons the process just as a wedged close does — most
             # often after sleep/wake. Recover rather than sit here looking healthy.
             self._recover_if_audio_stalled()
             return
+        log.info("recording (mic ready in %.0f ms)", (time.monotonic() - began) * 1000)
         self._indicate(State.RECORDING)
+        self._arm_record_limit()
 
     def _end_recording(self) -> None:
         with self._lock:
             if self._state is not State.RECORDING:
                 return
             self._state = State.BUSY
+        self._cancel_record_limit()
         self._indicate(State.BUSY)
         self._arm_busy_watchdog()
 
@@ -161,6 +230,34 @@ class DictationApp:
             threading.Thread(target=self._process, daemon=True).start()
         else:
             self._process()
+
+    # ---- recording limit: a lost key-up must not hold the mic forever ----
+
+    def _arm_record_limit(self) -> None:
+        with self._lock:
+            if self._record_timer is not None:
+                self._record_timer.cancel()
+            self._record_timer = threading.Timer(
+                _MAX_RECORDING, lambda: self._submit(self._record_limit_reached))
+            self._record_timer.daemon = True
+            self._record_timer.start()
+
+    def _cancel_record_limit(self) -> None:
+        with self._lock:
+            if self._record_timer is not None:
+                self._record_timer.cancel()
+                self._record_timer = None
+
+    def _record_limit_reached(self) -> None:
+        if self.state is not State.RECORDING:
+            return
+        log.warning("recording reached the %.0fs limit — ending it", _MAX_RECORDING)
+        self.notifier("Ba-Ge",
+                      f"Recording stopped at the {_MAX_RECORDING / 60:.0f}-minute limit.",
+                      urgency="normal")
+        if self._hotkey is not None:
+            self._hotkey.reset()  # the key-up may never come; don't swallow the next press
+        self._end_recording()
 
     # ---- watchdog: never stay stuck in BUSY ----
 
@@ -182,6 +279,7 @@ class DictationApp:
         if self.state is State.BUSY:
             log.error("processing exceeded %ss — force-resetting to idle", _BUSY_TIMEOUT)
             self._fail("Processing timed out — reset. Try again.")
+            self._recover_if_audio_stalled()
 
     # ---- worker ----
 
@@ -189,6 +287,8 @@ class DictationApp:
         try:
             finished, wav = platform.call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
             if not finished:
+                self._mark_audio_stalled(
+                    f"ending the recording did not return within {_STOP_TIMEOUT:.0f}s")
                 raise AudioError(
                     f"Audio backend stalled (>{_STOP_TIMEOUT:.0f}s) ending the "
                     "recording. Recording was lost; try again.")
@@ -218,7 +318,6 @@ class DictationApp:
             if text:
                 self.injector.type_text(text)
             self._set_state(State.IDLE)
-            self._recover_if_audio_stalled()  # after injecting: never lose the text
         except (TranscriptionError, InjectionError, AudioError) as exc:
             self._fail(str(exc))
         except Exception as exc:  # pragma: no cover - defensive
@@ -226,6 +325,11 @@ class DictationApp:
             self._fail(f"Unexpected error: {exc}")
         finally:
             self._disarm_busy_watchdog()
+            # On EVERY exit, not only after a paste: a close that wedged on a short
+            # tap, a silent clip or a failed transcription otherwise leaves the
+            # abandoned stream holding the mic (indicator lit) and every later open
+            # failing. Still runs after the paste, so recovery never eats text.
+            self._recover_if_audio_stalled()
 
     def _warn_about_levels(self, levels) -> None:
         """Tell the user when the *input* is why a transcript will be wrong.
@@ -251,21 +355,43 @@ class DictationApp:
         log.warning("%s: %s", title, body)
         self.notifier(title, body, urgency="critical")
 
+    def _mark_audio_stalled(self, reason: str) -> None:
+        """A bounded audio call never came back: flag the backend for relaunch."""
+        mark = getattr(self.recorder, "mark_stalled", None)
+        if mark is not None:
+            mark(reason)
+        else:
+            log.error("audio backend stalled: %s", reason)
+
     def _recover_if_audio_stalled(self) -> None:
-        """Relaunch if the audio backend wedged releasing the mic.
+        """Relaunch if the audio backend is unusable.
 
         A deadlocked PortAudio stop poisons this process's CoreAudio — every later
         open fails with paInternalError — and nothing in-process can clear it. The
-        old behaviour was to keep running as a dead app that still looked healthy;
-        restarting costs a second and keeps dictation working. Deliberately called
-        only after the transcript has been injected, so recovery never eats text.
+        old behaviour was to keep running as a dead app that still looked healthy
+        (with the abandoned stream keeping the OS mic indicator lit); restarting
+        costs a second and keeps dictation working. Callers invoke this only after
+        any transcript has been injected, so recovery never eats text.
         """
         if not getattr(self.recorder, "stalled", False):
             return
-        log.error("audio backend wedged releasing the mic — relaunching")
+        reason = getattr(self.recorder, "stall_reason", None) or "unknown"
+        last = platform.last_relaunch()
+        if last and last.get("reason") == "audio":
+            since = time.time() - float(last.get("time", 0) or 0)
+            if 0 <= since < _RELAUNCH_GUARD:
+                log.error("audio unusable again %.0fs after an audio relaunch (%s) — "
+                          "not relaunching again", since, reason)
+                self.notifier(
+                    "Ba-Ge — audio system stuck",
+                    "Restarting Ba-Ge didn't bring the microphone back. Unplug and "
+                    "replug it (or restart the computer), then reopen Ba-Ge.",
+                    urgency="critical")
+                return
+        log.error("audio backend unusable (%s) — relaunching", reason)
         self.notifier("Ba-Ge", "Audio glitch — restarting to recover.",
                       urgency="critical")
-        platform.relaunch_self()  # does not return
+        platform.relaunch_self("audio")  # does not return
 
     def _fail(self, message: str) -> None:
         log.error(message)
@@ -370,6 +496,7 @@ class DictationApp:
         self.injector = platform.make_injector(self.config)
         self._bind_clipboard()
         self.transcribe_fn = lambda wav: transcribe(wav, self.config)
+        self._recover_if_audio_stalled()  # the old recorder's close may have wedged
         if self._hotkey is not None:
             try:
                 self._hotkey.stop()
@@ -384,6 +511,7 @@ class DictationApp:
 
     def _shutdown(self) -> None:
         self._disarm_busy_watchdog()
+        self._cancel_record_limit()
         if platform.IS_LINUX:
             from .inject import close_device
             close_device()
@@ -453,6 +581,50 @@ def _type_test(rest) -> None:
     sys.stderr.write("[type-test] done. Compare typed output with EXPECTED above.\n")
 
 
+def _log_startup(config) -> None:
+    """One line that says what is running, so a bug report's log is self-describing."""
+    import platform as _stdplatform
+
+    log.info("Ba-Ge starting: python %s on %s %s, frozen=%s, argv=%s, hotkey=%s (%s), "
+             "device=%r, idle_release=%s",
+             _stdplatform.python_version(), sys.platform,
+             _stdplatform.mac_ver()[0] or _stdplatform.release(),
+             bool(getattr(sys, "frozen", False)),
+             list(getattr(sys, "orig_argv", sys.argv)), config.hotkey,
+             config.hotkey_mode, config.audio_device, config.idle_release)
+    last = platform.last_relaunch()
+    if last:
+        since = time.time() - float(last.get("time", 0) or 0)
+        if 0 <= since < 600:
+            log.info("relaunched %.0fs ago by pid %s (reason: %s)",
+                     since, last.get("pid"), last.get("reason") or "requested")
+
+
+_stack_dump_file = None  # kept open for faulthandler
+
+
+def _install_stack_dump() -> None:
+    """``kill -USR1 <pid>`` writes every thread's stack to ba-ge-stacks.log.
+
+    The failures that matter here are hangs (an audio call that never returns),
+    which leave no log line; a stack dump shows exactly which call is parked.
+    POSIX only, best-effort.
+    """
+    global _stack_dump_file
+    try:
+        import faulthandler
+        import signal
+
+        if not hasattr(faulthandler, "register") or not hasattr(signal, "SIGUSR1"):
+            return
+        path = paths.cache_dir() / "ba-ge-stacks.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _stack_dump_file = open(path, "a", encoding="utf-8")
+        faulthandler.register(signal.SIGUSR1, file=_stack_dump_file, all_threads=True)
+    except Exception:
+        log.debug("could not install the stack-dump handler", exc_info=True)
+
+
 def _add_file_log() -> None:
     """Mirror logs to a rotating file so the (console-less) packaged app is
     diagnosable — on macOS/Windows stderr is /dev/null, so failures are otherwise
@@ -493,12 +665,27 @@ def main() -> None:
         return
 
     if not singleton.acquire("ba-ge"):
+        log.info("another instance is already running — exiting")
         notify("Ba-Ge", "Already running — hold F9 to dictate.")
         return
 
     ensure_config_file()
     config = load_config()
-    DictationApp(config).run()
+    _log_startup(config)
+    _install_stack_dump()
+    try:
+        DictationApp(config).run()
+    except Exception:
+        log.exception("fatal error")  # hard_exit below would otherwise swallow it
+        raise
+    finally:
+        # A wedged audio stream makes sounddevice's atexit Pa_Terminate block
+        # forever (quit then needs SIGKILL, and the mic stays lit meanwhile).
+        if platform.audio_needs_hard_exit():
+            log.warning("audio layer is wedged — exiting without PortAudio teardown")
+            platform.hard_exit(0)
+        if not platform.IS_LINUX:
+            platform.arm_exit_watchdog(5.0)  # any other teardown hang
 
 
 if __name__ == "__main__":

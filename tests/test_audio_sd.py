@@ -102,6 +102,25 @@ def _cfg(**kw):
     return Config(**base)
 
 
+class _AudioStateTest(unittest.TestCase):
+    """Resets the backend's process-wide state around every case.
+
+    A wedged close deliberately leaves the stream counted and the process flagged
+    as poisoned (both are process-wide, like the CoreAudio fault they model), so
+    without this one case's deliberate deadlock would leak into the next.
+    """
+
+    def setUp(self):
+        import ba_ge.audio_sd as mod
+        self._mod = mod
+        mod._open_streams = 0
+        mod._poisoned = None
+
+    def tearDown(self):
+        self._mod._open_streams = 0
+        self._mod._poisoned = None
+
+
 def _wait_until(predicate, timeout=3.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -111,7 +130,7 @@ def _wait_until(predicate, timeout=3.0):
     return False
 
 
-class StreamLifecycleTest(unittest.TestCase):
+class StreamLifecycleTest(_AudioStateTest):
     def test_audio_outside_a_recording_is_dropped(self):
         """With a grace period the stream stays live between utterances — audio
         arriving in that window must not bleed into the next recording."""
@@ -201,7 +220,7 @@ class StreamLifecycleTest(unittest.TestCase):
             mod._CLOSE_TIMEOUT = original
 
 
-class MicReleaseTest(unittest.TestCase):
+class MicReleaseTest(_AudioStateTest):
     """Privacy contract: the mic is live only while actually dictating."""
 
     def test_mic_released_the_moment_a_recording_ends(self):
@@ -312,7 +331,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class MultiChannelDeviceTest(unittest.TestCase):
+class MultiChannelDeviceTest(_AudioStateTest):
     """A 2-channel receiver can move the mic between slots; mono capture would
     grab channel 1 and return DIGITAL SILENCE while the OS meter looks fine."""
 
@@ -368,15 +387,9 @@ class MultiChannelDeviceTest(unittest.TestCase):
             rec.stop()
 
 
-class WakeRecoveryTest(unittest.TestCase):
+class WakeRecoveryTest(_AudioStateTest):
     """Sleep/wake tears CoreAudio down under PortAudio: every open then fails with
     paInternalError even though a fresh process opens the same device fine."""
-
-    def setUp(self):
-        # A previously wedged close leaves the counter pinned on purpose; reset it
-        # so these tests aren't suppressed by leakage from another case.
-        import ba_ge.audio_sd as mod
-        mod._open_streams = 0
 
     @staticmethod
     def _poison(mod, fails):

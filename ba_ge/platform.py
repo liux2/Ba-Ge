@@ -142,7 +142,53 @@ def ffmpeg_exe() -> str:
 
 # --- self-relaunch (recovery from an unrecoverable backend state) ---
 
-def relaunch_self() -> None:
+def _relaunch_record_path():
+    from . import paths
+    return paths.cache_dir() / "relaunch.json"
+
+
+def last_relaunch() -> dict | None:
+    """The most recent self-relaunch as {"time", "reason", "pid"}, or None."""
+    import json
+
+    try:
+        data = json.loads(_relaunch_record_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) and "time" in data else None
+    except (OSError, ValueError):
+        return None
+
+
+def _record_relaunch(reason: str, pid: int) -> None:
+    import json
+    import time
+
+    try:
+        path = _relaunch_record_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"time": time.time(), "reason": reason, "pid": pid}),
+                        encoding="utf-8")
+    except OSError:
+        log.debug("could not record relaunch", exc_info=True)
+
+
+def _relaunch_argv() -> list[str]:
+    """The command that started this process, runnable again from the same cwd.
+
+    ``sys.argv`` is wrong for ``python -m ba_ge``: it holds the path of
+    ``__main__.py``, and running that as a script fails on its relative import.
+    ``sys.orig_argv`` keeps the interpreter options and ``-m ba_ge`` intact.
+    """
+    import sys
+
+    if getattr(sys, "frozen", False):  # PyInstaller/Nuitka binary outside a .app
+        return [sys.executable] + sys.argv[1:]
+    orig = list(getattr(sys, "orig_argv", None) or [])
+    if orig:
+        return [sys.executable] + orig[1:]
+    return [sys.executable] + sys.argv
+
+
+def relaunch_self(reason: str = "") -> None:
     """Quit and relaunch this app. Does not return.
 
     Used for states no in-process recovery can clear — new TCC grants, or a
@@ -151,7 +197,8 @@ def relaunch_self() -> None:
 
     The single-instance lock is held until THIS process dies, so the relaunch waits
     for our PID to exit before reopening — otherwise the new instance would hit the
-    lock and immediately quit.
+    lock and immediately quit. Exits with ``os._exit``: normal interpreter teardown
+    runs sounddevice's atexit Pa_Terminate, which hangs forever on a wedged stream.
     """
     import os
     import shlex
@@ -159,19 +206,169 @@ def relaunch_self() -> None:
     import sys
 
     pid = os.getpid()
+    _record_relaunch(reason, pid)
     marker = ".app/Contents/MacOS/"
     try:
         if marker in sys.executable:
-            app_path = sys.executable.split(marker)[0] + ".app"
-            cmd = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
-                   f"open -n {shlex.quote(app_path)}")
-            subprocess.Popen(["/bin/sh", "-c", cmd])
+            cmd = ["open", "-n", sys.executable.split(marker)[0] + ".app"]
         else:
-            subprocess.Popen([sys.executable] + sys.argv)
+            cmd = _relaunch_argv()
+        log.warning("relaunching (%s): %s", reason or "requested", shlex.join(cmd))
+        if IS_WIN:
+            subprocess.Popen(cmd)  # UNVERIFIED on Windows (no PID wait)
+        else:
+            script = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
+                      f"exec {shlex.join(cmd)}")
+            subprocess.Popen(["/bin/sh", "-c", script], stdin=subprocess.DEVNULL,
+                             start_new_session=True)
     except Exception:
         log.warning("relaunch failed", exc_info=True)
     finally:
-        os._exit(0)
+        hard_exit(0)
+
+
+def hard_exit(code: int = 0) -> None:
+    """Exit immediately, skipping atexit handlers. Does not return.
+
+    The atexit path is not safe once the audio layer has wedged: sounddevice's
+    handler stops/closes the last stream and runs Pa_Terminate, which blocks
+    forever on the wedged unit (that is what made quitting need SIGKILL). Logs are
+    flushed first so the reason survives.
+    """
+    import logging
+    import os
+
+    for handler in list(logging.getLogger().handlers):
+        try:
+            handler.flush()
+        except Exception:
+            pass
+    os._exit(code)
+
+
+def audio_needs_hard_exit() -> bool:
+    """True if interpreter teardown could hang in PortAudio (see ``hard_exit``)."""
+    import sys
+
+    mod = sys.modules.get(f"{__package__}.audio_sd")  # never imported -> no PortAudio
+    try:
+        return bool(mod is not None and mod.needs_hard_exit())
+    except Exception:
+        return True
+
+
+def arm_exit_watchdog(seconds: float) -> None:
+    """Force the process out if normal teardown hasn't finished in ``seconds``."""
+    import threading
+
+    def fire():
+        log.error("shutdown did not finish within %.0fs — forcing exit", seconds)
+        hard_exit(0)
+
+    timer = threading.Timer(seconds, fire)
+    timer.daemon = True
+    timer.start()
+
+
+# --- hotkey listener (macOS: survive the OS disabling the event tap) ---
+
+# Out-of-band CGEventTap "event types": macOS stops delivering to a tap whose
+# thread was too slow, or on certain user input, and tells the tap once via its
+# callback. pynput 1.8 ignores both and never re-enables the tap, so the hotkey
+# goes dead for the rest of the process — and if it happened mid-hold, the key-up
+# is lost and the app sits in RECORDING with the mic lit.
+_TAP_DISABLED_BY_TIMEOUT = 0xFFFFFFFE
+_TAP_DISABLED_BY_USER_INPUT = 0xFFFFFFFF
+_darwin_listener_cls = None
+
+
+def make_keyboard_listener(on_press, on_release, on_tap_restored=None):
+    """A pynput keyboard listener; on macOS one that re-enables a disabled tap.
+
+    ``on_tap_restored`` (macOS only) runs on the listener thread after macOS had
+    disabled the tap and it was re-enabled — key events may have been lost while
+    it was off, so the caller should reconcile its held-key state.
+    """
+    from pynput import keyboard
+
+    if not IS_MAC:
+        return keyboard.Listener(on_press=on_press, on_release=on_release)
+    return _darwin_listener_class()(on_press=on_press, on_release=on_release,
+                                    on_tap_restored=on_tap_restored)
+
+
+def _darwin_listener_class():
+    global _darwin_listener_cls
+    if _darwin_listener_cls is None:
+        from pynput import keyboard
+        _darwin_listener_cls = _tap_guarded(keyboard.Listener)
+    return _darwin_listener_cls
+
+
+def _tap_guarded(base):
+    """Subclass pynput's macOS keyboard listener to re-enable a disabled tap."""
+
+    class TapGuardedListener(base):
+        def __init__(self, *args, on_tap_restored=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._bage_tap = None
+            self._bage_on_tap_restored = on_tap_restored
+
+        def _create_event_tap(self):
+            tap = super()._create_event_tap()
+            self._bage_tap = tap
+            return tap
+
+        def _handler(self, proxy, event_type, event, refcon):
+            # Checked before pynput touches ``event``: for these out-of-band types
+            # it is not a keyboard event, and an exception inside pynput's handler
+            # would stop the listener outright.
+            if event_type in (_TAP_DISABLED_BY_TIMEOUT, _TAP_DISABLED_BY_USER_INPUT):
+                _reenable_tap(self._bage_tap, event_type, self._bage_on_tap_restored)
+                return event
+            return super()._handler(proxy, event_type, event, refcon)
+
+    return TapGuardedListener
+
+
+def _reenable_tap(tap, event_type, on_restored) -> None:
+    why = "timeout" if event_type == _TAP_DISABLED_BY_TIMEOUT else "user input"
+    try:
+        from Quartz import CGEventTapEnable
+
+        if tap is None:
+            log.error("macOS disabled the hotkey event tap (%s), and it could not be "
+                      "re-enabled (no tap handle)", why)
+            return
+        CGEventTapEnable(tap, True)
+        log.warning("macOS disabled the hotkey event tap (%s) — re-enabled it", why)
+    except Exception:
+        log.error("could not re-enable the hotkey event tap", exc_info=True)
+        return
+    if on_restored is not None:
+        try:
+            on_restored()
+        except Exception:
+            log.exception("hotkey tap-restored callback failed")
+
+
+def key_is_down(vk) -> bool | None:
+    """Whether the key with virtual keycode ``vk`` is physically held right now.
+
+    macOS only (reads the HID system state, independent of event delivery), so it
+    can tell whether a key-up was lost while the event tap was disabled. None when
+    unknown: off macOS, no keycode, or the query failed.
+    """
+    if not IS_MAC or vk is None:
+        return None
+    try:
+        import Quartz
+
+        return bool(Quartz.CGEventSourceKeyState(
+            Quartz.kCGEventSourceStateHIDSystemState, int(vk)))
+    except Exception:
+        log.debug("CGEventSourceKeyState failed", exc_info=True)
+        return None
 
 
 # --- permissions (macOS TCC; no-op elsewhere) ---
@@ -401,24 +598,34 @@ def _refresh_portaudio(sd) -> None:
     plugged in after the app started never shows up, no matter how often the list is
     re-queried; only a terminate/initialise cycle rebuilds it.
 
-    Skipped while a capture stream is open, because ``Pa_Terminate`` would tear that
-    stream down — and on macOS that is precisely the stop path that can deadlock
-    (see ba_ge/audio_sd.py). Bounded for the same reason: this runs on the Qt main
-    thread when Settings opens, so a wedge here would freeze the UI.
+    Skipped while a capture stream is open or being opened, because
+    ``Pa_Terminate`` would tear that stream down — and on macOS that is precisely
+    the stop path that can deadlock (see ba_ge/audio_sd.py). Bounded for the same
+    reason: this runs on the Qt main thread when Settings opens, so a wedge here
+    would freeze the UI.
     """
-    from .audio_sd import capture_active
+    from . import audio_sd
 
-    if capture_active():
-        log.info("skipping mic re-enumeration: capture is active")
+    # Non-blocking: a hotkey press opening the mic on another thread holds this, and
+    # waiting on it from the UI thread would freeze Settings behind a slow open.
+    if not audio_sd._pa_lock.acquire(blocking=False):
+        log.info("skipping mic re-enumeration: the microphone is being opened")
         return
+    try:
+        if audio_sd.capture_active():
+            log.info("skipping mic re-enumeration: capture is active")
+            return
 
-    def cycle():
-        sd._terminate()
-        sd._initialize()
+        def cycle():
+            sd._terminate()
+            sd._initialize()
 
-    finished, _ = call_with_timeout(cycle, 3.0)
-    if not finished:
-        log.error("PortAudio re-init stalled — mic list may be stale")
+        finished, _ = call_with_timeout(cycle, 3.0)
+        if not finished:
+            log.error("PortAudio re-init stalled — mic list may be stale")
+            audio_sd.mark_poisoned("PortAudio re-enumeration did not finish within 3s")
+    finally:
+        audio_sd._pa_lock.release()
 
 
 def _sounddevice_inputs() -> list[tuple[str, str]]:

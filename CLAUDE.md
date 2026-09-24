@@ -76,6 +76,33 @@ with a custom-vocabulary (`keyterms`) dictionary.
       `app.py` also bounds
       `recorder.stop()` with `_STOP_TIMEOUT` so any future audio stall surfaces as a
       visible error instead of a silent zombie.
+  - ✅ **"works for a while, then can't record; mic indicator stuck lit" (macOS)** —
+    the wedged-close recovery above was mostly dead code until this fix:
+    (1) `audio_sd` raised its OWN `AudioError` class, which `app.py` (importing
+    `audio.AudioError`) never caught, so every failed open escaped to the debouncer's
+    log-and-swallow, skipped `_fail`/relaunch, and left RECORDING set with no stream;
+    now there is ONE class. (2) The relaunch ran only after a successful paste; a
+    close that wedged on a short tap / silent clip / API error left the abandoned
+    stream holding the mic (indicator lit forever). Now `_process` recovers in
+    `finally`, `_begin_recording` relaunches before touching a poisoned layer, and
+    "poisoned" is process-wide (`audio_sd.mark_poisoned`, survives Settings swaps).
+    A missing/unplugged mic (ValueError, paInvalidDevice/-Unavailable) is an error,
+    NOT poison — else it would relaunch on every press. A relaunch that recurs <60s
+    after an audio relaunch is refused (advises replug) instead of looping.
+    (3) Opening the mic ran on pynput's thread = macOS's **event-tap thread**; a slow
+    open can get the tap disabled, and pynput 1.8 never re-enables it (hotkey dead;
+    a lost key-up = stuck RECORDING, mic lit). Now press/release only enqueue to one
+    serial `bage-hotkey-worker`; `recorder.start()` is bounded (`_START_TIMEOUT`);
+    `platform.make_keyboard_listener` re-enables a disabled tap on macOS and
+    `HotkeyListener` reconciles a lost key-up via `CGEventSourceKeyState`;
+    `_MAX_RECORDING` (5 min) ends any recording whose key-up never came.
+    (4) Quit used to hang in sounddevice's atexit `Pa_Terminate` on the wedged stream
+    (the "SIGTERM hangs" above): `main()` now `os._exit`s when audio is wedged.
+    (5) `relaunch_self` was broken for `python -m ba_ge` (re-ran `__main__.py` as a
+    script) and raced the singleton lock; it now uses `sys.orig_argv` and waits for
+    the old PID. Diagnose a hang with `kill -USR1 <pid>` → `ba-ge-stacks.log`
+    (faulthandler, every thread) next to `ba-ge.log`. Tests: `tests/test_recovery.py`.
+    ⬜ Tap re-enable + key-state reconcile are UNVERIFIED on hardware.
   - ✅ **sleep/wake recovery** (`audio_sd._reinit_portaudio`): macOS tears CoreAudio
     down over sleep, and PortAudio's cached HAL state then fails EVERY open with
     `paInternalError` (-9986) — while a fresh process opens the same device fine, so

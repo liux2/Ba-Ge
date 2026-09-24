@@ -46,7 +46,9 @@ def _notify_macos(title, message):
     text = message.replace('"', '\\"')
     ttl = title.replace('"', '\\"')
     script = f'display notification "{text}" with title "{ttl}"'
-    subprocess.run(["osascript", "-e", script], check=False,
+    # Bounded: this runs on whichever thread reports the error (the hotkey worker,
+    # the processing thread), and a hung osascript must not stall dictation.
+    subprocess.run(["osascript", "-e", script], check=False, timeout=5,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
