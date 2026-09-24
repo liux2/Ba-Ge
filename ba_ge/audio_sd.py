@@ -69,8 +69,10 @@ log = logging.getLogger("bage.audio_sd")
 _CLOSE_TIMEOUT = 2.0
 
 # A recording at least this long that received no buffer at all means the device
-# stopped delivering (callbacks normally start within tens of milliseconds).
-_NO_AUDIO_AFTER = 0.5
+# stopped delivering. Wired/USB mics call back within tens of milliseconds; the
+# margin is for Bluetooth, whose first buffer can lag while it switches profile
+# (the first-buffer latency is logged per clip, to tune this from real use).
+_NO_AUDIO_AFTER = 1.5
 
 # Multi-input devices put the mic on whichever channel they feel like: a 2-channel
 # wireless receiver can move it between slots when a transmitter is re-paired, and
@@ -80,11 +82,17 @@ _NO_AUDIO_AFTER = 0.5
 # dozens of inputs doesn't make us haul useless audio around.
 _MAX_CAPTURE_CHANNELS = 8
 
-# PortAudio errors that mean "that microphone isn't there right now" (unplugged,
-# renamed, taken by another app) rather than "this process's CoreAudio is broken".
-# A relaunch can't fix these, so they must not trigger one.
+# PortAudio errors that mean "that microphone isn't there / won't take this
+# format" rather than "this process's CoreAudio is broken". A relaunch can't fix
+# these, so they must not trigger one (it would restart on every press).
 _MISSING_DEVICE_CODES = {-9996, -9985}  # paInvalidDevice, paDeviceUnavailable
+# paInvalidChannelCount, paInvalidSampleRate, paSampleFormatNotSupported,
+# paBadIODeviceCombination: a config/device mismatch.
+_FORMAT_CODES = {-9998, -9997, -9994, -9993}
 _PA_CODE = re.compile(r"PaErrorCode (-?\d+)")
+# sounddevice's error when the system has no default input device at all (it
+# asks PortAudio about device -1); it carries no PaErrorCode.
+_NO_DEFAULT_INPUT = "Error querying device -1"
 
 # Set once this process's PortAudio/CoreAudio is known to be unusable (a wedged
 # stop/close, a stalled re-init, an open that never returned): only a relaunch
@@ -92,9 +100,10 @@ _PA_CODE = re.compile(r"PaErrorCode (-?\d+)")
 # one recorder, so swapping recorders in Settings must not forget it.
 _poisoned: str | None = None
 
-# Serialises PortAudio open/re-init against the Settings mic re-enumeration
-# (platform._refresh_portaudio), which runs Pa_Terminate on another thread.
-# Never held across a stop/close — those can wedge.
+# Serialises PortAudio open/re-init against the Settings mic enumeration
+# (platform._sounddevice_inputs), which runs Pa_Terminate on another thread. Held
+# across opens and bounded closes only — never across an unbounded stop/close,
+# since those can wedge. Other threads must only ever try it without blocking.
 _pa_lock = threading.RLock()
 
 
@@ -120,12 +129,32 @@ def needs_hard_exit() -> bool:
     return _poisoned is not None or capture_active()
 
 
-def _is_missing_device(exc: BaseException) -> bool:
-    """The open failed because the device is absent/unavailable, not poisoned."""
-    if isinstance(exc, ValueError):  # sounddevice: "No input device matching ..."
-        return True
+def _pa_error_code(exc: BaseException) -> int | None:
+    args = getattr(exc, "args", ())
+    if len(args) > 1 and isinstance(args[1], int):  # sounddevice.PortAudioError
+        return args[1]
     match = _PA_CODE.search(str(exc))
-    return bool(match) and int(match.group(1)) in _MISSING_DEVICE_CODES
+    return int(match.group(1)) if match else None
+
+
+def _unavailable_reason(exc: BaseException, device) -> str | None:
+    """A user-facing reason if the open failed for a reason a relaunch can't fix.
+
+    None means "treat as a broken audio layer" (poison + relaunch).
+    """
+    name = "the default microphone" if device is None else repr(device)
+    if _NO_DEFAULT_INPUT in str(exc):
+        return ("No microphone found. Plug one in, or choose one in Settings → "
+                "Microphone.")
+    code = _pa_error_code(exc)
+    if isinstance(exc, ValueError) or code in _MISSING_DEVICE_CODES:
+        return (f"Microphone unavailable ({name}): {exc}. Plug it in, or choose "
+                "another one in Settings → Microphone.")
+    if code in _FORMAT_CODES:
+        return (f"The microphone ({name}) rejected the recording format: {exc}. "
+                "Choose another one in Settings → Microphone, or check [audio] "
+                "sample_rate/channels in config.toml.")
+    return None
 
 
 # Number of capture streams this process currently holds open. Enumerating devices
@@ -181,6 +210,10 @@ class SdRecorder:
         self._idle_timer: threading.Timer | None = None
         self._capture_ch = config.channels  # channels the live stream was opened with
         self._lock = threading.Lock()
+        self._first_buffer_at: float | None = None
+        # Called (no args) when a close wedges with no recording around to notice —
+        # the idle-release timer. app.py wires it to its relaunch.
+        self.on_stall = None
 
     # ---- poisoned audio layer (app.py relaunches when this reads True) ----
 
@@ -231,6 +264,8 @@ class SdRecorder:
         returned rather than bleeding into the next one.
         """
         if self._armed:
+            if self._first_buffer_at is None:
+                self._first_buffer_at = time.monotonic()
             self._chunks.append(bytes(indata))
 
     def _ensure_stream(self) -> None:
@@ -252,7 +287,7 @@ class SdRecorder:
         that can deadlock. Skipped if any capture stream is open — tearing one down
         mid-recording would be worse than the failure we are recovering from.
         """
-        if capture_active():
+        if capture_active() or _poisoned is not None:
             return False
         try:
             import sounddevice as sd
@@ -260,8 +295,11 @@ class SdRecorder:
             from . import platform
             finished, _ = platform.call_with_timeout(
                 lambda: (sd._terminate(), sd._initialize()), 3.0)
-        except Exception:
+        except Exception as exc:
+            # Possibly terminated and not re-initialised: PortAudio's state is
+            # unknown, and every later call could fail (or worse).
             log.debug("PortAudio re-init failed", exc_info=True)
+            mark_poisoned(f"PortAudio re-init failed: {exc}")
             return False
         if not finished:
             # Abandoned half-way through Pa_Terminate/Pa_Initialize: nothing in this
@@ -273,6 +311,10 @@ class SdRecorder:
         import sounddevice as sd
 
         with _pa_lock:
+            if _poisoned is not None:
+                # Flagged while we waited for the lock (e.g. a Settings refresh
+                # stalled): don't call into a PortAudio that may be mid-teardown.
+                raise AudioError(f"audio is unusable until Ba-Ge restarts ({_poisoned})")
             channels = self._capture_channels(device)
             began = time.monotonic()
             stream = None
@@ -289,10 +331,7 @@ class SdRecorder:
                 self._stream = None
                 self._open_device = None
                 if stream is not None:  # opened but failed to start — don't leak it
-                    try:
-                        stream.close()
-                    except Exception:
-                        log.debug("discarding half-open stream failed", exc_info=True)
+                    self._discard_half_open(stream)
                 if not retry and self._reinit_portaudio():
                     # Sleep/wake tears CoreAudio down underneath PortAudio, whose
                     # cached HAL state then fails every open with paInternalError
@@ -302,13 +341,12 @@ class SdRecorder:
                     log.warning("microphone open failed (%s) — re-initialised "
                                 "PortAudio, retrying", exc)
                     return self._open_stream(device, retry=True)
-                if _poisoned is None and _is_missing_device(exc):
-                    # Unplugged / renamed / claimed by another app. A relaunch can't
-                    # fix that, so say what can instead of restarting on every press.
-                    name = "the default microphone" if device is None else repr(device)
-                    raise AudioError(
-                        f"Microphone unavailable ({name}): {exc}. Plug it in, or "
-                        "choose another one in Settings → Microphone.") from exc
+                reason = None if _poisoned is not None else _unavailable_reason(
+                    exc, device)
+                if reason is not None:
+                    # Unplugged / no mic at all / wrong format. A relaunch can't fix
+                    # that, so say what can instead of restarting on every press.
+                    raise AudioError(reason) from exc
                 mark_poisoned(f"microphone open failed: {exc}")
                 raise AudioError(f"could not open microphone: {exc}") from exc
             global _open_streams
@@ -319,6 +357,22 @@ class SdRecorder:
             self._capture_ch = channels
             log.info("capture stream open in %.0f ms (device=%r, channels=%d)",
                      (time.monotonic() - began) * 1000, device, channels)
+
+    def _discard_half_open(self, stream) -> None:
+        """Close a stream that opened but failed to start — bounded like any close.
+
+        PortAudio may still consider it running, so this close can reach the same
+        AudioOutputUnitStop that deadlocks.
+        """
+        from . import platform
+
+        try:
+            finished, _ = platform.call_with_timeout(stream.close, _CLOSE_TIMEOUT)
+        except Exception:
+            log.debug("discarding half-open stream failed", exc_info=True)
+            return
+        if not finished:
+            mark_poisoned("closing a half-open stream wedged")
 
     def _close_stream(self) -> bool:
         """Stop+close the live stream, bounded by ``_CLOSE_TIMEOUT``.
@@ -333,7 +387,7 @@ class SdRecorder:
         if stream is None:
             return True
 
-        state = {"abandoned": False}
+        state = {"abandoned": False, "done": False}
         began = time.monotonic()
 
         def shut():
@@ -343,12 +397,16 @@ class SdRecorder:
                 stream.close()
             except Exception:
                 log.debug("stream close failed", exc_info=True)
-            if state["abandoned"]:
-                # Slow rather than dead. Uncount it so a device refresh isn't
-                # blocked forever; the process stays flagged — it already relaunched
-                # or will.
-                with _open_lock:
+            # Hand-off under the lock, so "finished just after we gave up" can't
+            # slip between the caller's timeout and its abandoned flag.
+            with _open_lock:
+                state["done"] = True
+                late = state["abandoned"]
+                if late:
+                    # Slow rather than dead: uncount it so a device refresh isn't
+                    # blocked forever. The process stays flagged for relaunch.
                     _open_streams = max(0, _open_streams - 1)
+            if late:
                 log.warning("abandoned PortAudio close finished late, after %.1fs",
                             time.monotonic() - began)
 
@@ -356,16 +414,18 @@ class SdRecorder:
         worker = threading.Thread(target=shut, name="bage-audio-close", daemon=True)
         worker.start()
         worker.join(_CLOSE_TIMEOUT)
-        if worker.is_alive():
+        with _open_lock:
+            abandoned = not state["done"]
+            state["abandoned"] = abandoned
+            if not abandoned:
+                _open_streams = max(0, _open_streams - 1)
+        if abandoned:
             # NOT decremented: PortAudio still holds the device, so a device-list
             # refresh must keep treating this process as busy.
-            state["abandoned"] = True
             log.error("PortAudio did not close within %.1fs — abandoning the stream",
                       _CLOSE_TIMEOUT)
             mark_poisoned("PortAudio stream close wedged")
             return False
-        with _open_lock:
-            _open_streams = max(0, _open_streams - 1)
         log.info("capture stream closed in %.0f ms", (time.monotonic() - began) * 1000)
         return True
 
@@ -408,7 +468,9 @@ class SdRecorder:
             if self._armed or self._stream is None:
                 return  # a recording started in the meantime
             log.info("idle — releasing the microphone (indicator goes out)")
-            self._close_stream()
+            closed = self._close_stream()
+        if not closed and self.on_stall is not None:
+            self.on_stall()  # no recording will trip over this; the mic is still lit
 
     # ---- recording ----
 
@@ -419,7 +481,14 @@ class SdRecorder:
             # finishes (~100ms) before we reopen, rather than racing it.
             self._cancel_idle_release()
             self._ensure_stream()  # opens a stream unless idle_release kept one
+            if _poisoned is not None:
+                # The open finished, but the audio layer was flagged meanwhile —
+                # most likely app.py gave up waiting for this very open. Nobody will
+                # stop this recording, so release the mic rather than arm it.
+                self._close_stream()
+                raise AudioError(f"audio is unusable until Ba-Ge restarts ({_poisoned})")
             self._chunks = []  # fresh buffer BEFORE arming, never the reverse
+            self._first_buffer_at = None
             self._start = time.monotonic()
             self._armed = True
 
@@ -428,23 +497,29 @@ class SdRecorder:
             if not self._armed:
                 return None
             self._armed = False
-            wall = time.monotonic() - self._start
+            now = time.monotonic()
+            wall = now - self._start
+            first = self._first_buffer_at
             chunks, self._chunks = self._chunks, []
+            # Held long enough to expect audio, yet PortAudio never delivered a
+            # single buffer: the device died under an open stream.
+            dead = not chunks and wall >= max(self.config.min_duration, _NO_AUDIO_AFTER)
             # Audio is already out of the buffer, so releasing here costs nothing
             # even if the close wedges — the utterance still transcribes.
             self._cancel_idle_release()
-            if float(getattr(self.config, "idle_release", 0) or 0) <= 0:
-                self._close_stream()  # mic off now, not "eventually"
+            if dead or float(getattr(self.config, "idle_release", 0) or 0) <= 0:
+                self._close_stream()  # mic off now (and never reuse a dead stream)
             else:
                 self._schedule_idle_release()
 
+        if first is not None:
+            log.info("captured %.1fs (first audio buffer after %.0f ms)",
+                     wall, (first - self._start) * 1000)
         pcm = b"".join(chunks)
         if not pcm:
-            # Held long enough to expect audio, yet PortAudio never delivered a
-            # single buffer: the device died under an open stream. Returning None
-            # would make this look like an ignored tap and the app like it simply
-            # stopped working, so say why.
-            if wall >= max(self.config.min_duration, _NO_AUDIO_AFTER):
+            # Returning None would make a dead device look like an ignored tap and
+            # the app like it simply stopped working, so say why.
+            if dead:
                 log.warning("no audio buffers delivered in %.1fs of recording", wall)
                 raise AudioError(
                     "No audio from the microphone — it may be unplugged or asleep. "

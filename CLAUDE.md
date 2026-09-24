@@ -92,15 +92,31 @@ with a custom-vocabulary (`keyterms`) dictionary.
     (3) Opening the mic ran on pynput's thread = macOS's **event-tap thread**; a slow
     open can get the tap disabled, and pynput 1.8 never re-enables it (hotkey dead;
     a lost key-up = stuck RECORDING, mic lit). Now press/release only enqueue to one
-    serial `bage-hotkey-worker`; `recorder.start()` is bounded (`_START_TIMEOUT`);
+    serial `bage-hotkey-worker`; `recorder.start()` is bounded (`_START_TIMEOUT`,
+    mac/win only — an abandoned arecord start would run unseen) and a start that
+    finishes after the app gave up refuses to arm (it closes the stream);
     `platform.make_keyboard_listener` re-enables a disabled tap on macOS and
     `HotkeyListener` reconciles a lost key-up via `CGEventSourceKeyState`;
-    `_MAX_RECORDING` (5 min) ends any recording whose key-up never came.
+    `_MAX_RECORDING` (5 min) ends a HOLD whose key-up never came — hold mode on
+    mac/win only (`platform.hotkey_can_lose_release`), and not while the key is
+    physically down. Never in toggle mode: there the user's "stop" tap would start
+    a new unattended recording. Linux has no limit.
+    Every utterance carries a generation (`app._gen`): a `_process` the busy
+    watchdog gave up on can't move the state or paste into the NEXT dictation
+    (that used to leave the new recording armed with the mic lit). A relaunch is
+    deferred while a transcript is in flight (`_in_flight`) and single-flight.
     (4) Quit used to hang in sounddevice's atexit `Pa_Terminate` on the wedged stream
-    (the "SIGTERM hangs" above): `main()` now `os._exit`s when audio is wedged.
+    (the "SIGTERM hangs" above): `main()` now `os._exit`s when audio is wedged,
+    and the exit watchdog is faulthandler's C thread (a Python Timer can't fire
+    while a C++ destructor holds the GIL).
     (5) `relaunch_self` was broken for `python -m ba_ge` (re-ran `__main__.py` as a
-    script) and raced the singleton lock; it now uses `sys.orig_argv` and waits for
-    the old PID. Diagnose a hang with `kill -USR1 <pid>` → `ba-ge-stacks.log`
+    script) and raced the singleton lock; it now uses `sys.orig_argv`, waits for
+    the old PID (POSIX), and the relaunched instance retries the lock
+    (`BAGE_RELAUNCHED_FROM`). The `.app` branch is taken only when frozen.
+    A missing mic, no default input at all ("Error querying device -1") and format
+    errors (-9998/-9997/-9994/-9993) are errors, not poison. The Settings mic list
+    holds `_pa_lock` (non-blocking) across re-init AND query, and skips a poisoned
+    process. Diagnose a hang with `kill -USR1 <pid>` → `ba-ge-stacks.log`
     (faulthandler, every thread) next to `ba-ge.log`. Tests: `tests/test_recovery.py`.
     ⬜ Tap re-enable + key-state reconcile are UNVERIFIED on hardware.
   - ✅ **sleep/wake recovery** (`audio_sd._reinit_portaudio`): macOS tears CoreAudio

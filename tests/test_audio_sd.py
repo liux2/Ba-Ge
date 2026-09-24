@@ -115,8 +115,23 @@ class _AudioStateTest(unittest.TestCase):
         self._mod = mod
         mod._open_streams = 0
         mod._poisoned = None
+        # Track every recorder a case creates: one left with an idle-release timer
+        # pending would otherwise close its stream seconds later, in the middle of
+        # an unrelated case, and un-count that case's stream.
+        self._recorders = []
+        original_init = SdRecorder.__init__
+        recorders = self._recorders
+
+        def tracking_init(rec, *args, **kwargs):
+            original_init(rec, *args, **kwargs)
+            recorders.append(rec)
+
+        SdRecorder.__init__ = tracking_init
+        self.addCleanup(setattr, SdRecorder, "__init__", original_init)
 
     def tearDown(self):
+        for rec in self._recorders:
+            rec._cancel_idle_release()
         self._mod._open_streams = 0
         self._mod._poisoned = None
 
@@ -270,7 +285,9 @@ class MicReleaseTest(_AudioStateTest):
             sd.opened[0].feed(b"\x10\x27" * 16000)
             rec.stop()
             self.assertIsNotNone(rec._stream)  # still held right after a recording
-            self.assertTrue(_wait_until(lambda: rec._stream is None),
+            # _stream is cleared before the close worker runs, so wait on the close
+            # itself rather than on the reference.
+            self.assertTrue(_wait_until(lambda: sd.opened[0].calls[-1:] == ["close"]),
                             "stream was never released while idle")
         self.assertEqual(sd.opened[0].calls, ["start", "stop", "close"])
 

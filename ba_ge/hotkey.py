@@ -125,6 +125,11 @@ class HotkeyListener:
             self._on_press, self._on_release, on_tap_restored=self._on_tap_restored)
         self._listener.start()
 
+    def key_is_down(self) -> bool | None:
+        """Whether the hotkey is physically held now (macOS); None if unknown."""
+        from . import platform
+        return platform.key_is_down(self._vk)
+
     def reset(self) -> None:
         """Forget a hold in progress (the app ended it without seeing the key-up)."""
         self._debounce.cancel()
