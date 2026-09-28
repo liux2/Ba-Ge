@@ -64,7 +64,11 @@ _DROP = ('/qml/', '/translations/', '/include/', 'plugins/qmltooling',
          'QtDesigner', 'QtQuick3D', 'Qt3D', 'QtMultimedia', 'QtWebEngine',
          'QtCharts', 'QtDataVisualization', 'QtGraphs', 'QtPdf', 'QtSensors',
          'QtWebSockets', 'QtWebChannel', 'QtRemoteObjects', 'QtScxml', 'QtSql',
-         'QtSpatialAudio', 'QtBluetooth', 'QtNfc', 'QtPositioning', 'QtSerialPort')
+         'QtSpatialAudio', 'QtBluetooth', 'QtNfc', 'QtPositioning', 'QtSerialPort',
+         # Qt's bundled tool apps: PyInstaller 6.22 re-links them as symlinked
+         # nested bundles that make codesign fail ("Too many levels of symbolic
+         # links") — and a dictation app never launches Qt Designer anyway.
+         'Assistant.app', 'Designer.app', 'Linguist.app')
 def _keep(entry):
     joined = (str(entry[0]) + '|' + str(entry[1]))
     return not any(frag in joined for frag in _DROP)
