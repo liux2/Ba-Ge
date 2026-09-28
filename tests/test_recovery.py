@@ -1029,12 +1029,12 @@ class TapGuardTest(unittest.TestCase):
         quartz = types.ModuleType("Quartz")
         quartz.CGEventTapEnable = lambda tap, on: self.enabled.append((tap, on))
         quartz.CFMachPortInvalidate = lambda tap: self.invalidated.append(tap)
+        # CoreFoundation is mapped to None so ``import`` raises ImportError and
+        # the code falls back to Quartz. Merely popping it is not enough on a Mac
+        # with PyObjC installed: the real module re-imports and rejects "TAP".
         for name, module in (("Quartz", quartz), ("CoreFoundation", None)):
             saved = sys.modules.get(name, None)
-            if module is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = module
+            sys.modules[name] = module
             self.addCleanup(self._restore, name, saved)
 
         class FakePynputListener:
