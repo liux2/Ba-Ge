@@ -69,8 +69,14 @@ def _acquire_windows_mutex(name: str) -> bool:
     import ctypes
 
     ERROR_ALREADY_EXISTS = 183
-    handle = ctypes.windll.kernel32.CreateMutexW(None, False, f"Local\\{name}")
-    if not handle or ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateMutexW(None, False, f"Local\\{name}")
+    if not handle:
+        return False
+    if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        # Close our handle to the other instance's mutex: holding it would keep the
+        # mutex alive after that instance exits, so a retry could never succeed.
+        kernel32.CloseHandle(handle)
         return False
     _held.append(handle)
     return True

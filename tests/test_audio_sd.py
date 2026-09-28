@@ -102,6 +102,40 @@ def _cfg(**kw):
     return Config(**base)
 
 
+class _AudioStateTest(unittest.TestCase):
+    """Resets the backend's process-wide state around every case.
+
+    A wedged close deliberately leaves the stream counted and the process flagged
+    as poisoned (both are process-wide, like the CoreAudio fault they model), so
+    without this one case's deliberate deadlock would leak into the next.
+    """
+
+    def setUp(self):
+        import ba_ge.audio_sd as mod
+        self._mod = mod
+        mod._open_streams = 0
+        mod._poisoned = None
+        # Track every recorder a case creates: one left with an idle-release timer
+        # pending would otherwise close its stream seconds later, in the middle of
+        # an unrelated case, and un-count that case's stream.
+        self._recorders = []
+        original_init = SdRecorder.__init__
+        recorders = self._recorders
+
+        def tracking_init(rec, *args, **kwargs):
+            original_init(rec, *args, **kwargs)
+            recorders.append(rec)
+
+        SdRecorder.__init__ = tracking_init
+        self.addCleanup(setattr, SdRecorder, "__init__", original_init)
+
+    def tearDown(self):
+        for rec in self._recorders:
+            rec._cancel_idle_release()
+        self._mod._open_streams = 0
+        self._mod._poisoned = None
+
+
 def _wait_until(predicate, timeout=3.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -111,7 +145,7 @@ def _wait_until(predicate, timeout=3.0):
     return False
 
 
-class StreamLifecycleTest(unittest.TestCase):
+class StreamLifecycleTest(_AudioStateTest):
     def test_audio_outside_a_recording_is_dropped(self):
         """With a grace period the stream stays live between utterances — audio
         arriving in that window must not bleed into the next recording."""
@@ -201,7 +235,7 @@ class StreamLifecycleTest(unittest.TestCase):
             mod._CLOSE_TIMEOUT = original
 
 
-class MicReleaseTest(unittest.TestCase):
+class MicReleaseTest(_AudioStateTest):
     """Privacy contract: the mic is live only while actually dictating."""
 
     def test_mic_released_the_moment_a_recording_ends(self):
@@ -251,7 +285,9 @@ class MicReleaseTest(unittest.TestCase):
             sd.opened[0].feed(b"\x10\x27" * 16000)
             rec.stop()
             self.assertIsNotNone(rec._stream)  # still held right after a recording
-            self.assertTrue(_wait_until(lambda: rec._stream is None),
+            # _stream is cleared before the close worker runs, so wait on the close
+            # itself rather than on the reference.
+            self.assertTrue(_wait_until(lambda: sd.opened[0].calls[-1:] == ["close"]),
                             "stream was never released while idle")
         self.assertEqual(sd.opened[0].calls, ["start", "stop", "close"])
 
@@ -312,7 +348,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class MultiChannelDeviceTest(unittest.TestCase):
+class MultiChannelDeviceTest(_AudioStateTest):
     """A 2-channel receiver can move the mic between slots; mono capture would
     grab channel 1 and return DIGITAL SILENCE while the OS meter looks fine."""
 
@@ -368,15 +404,9 @@ class MultiChannelDeviceTest(unittest.TestCase):
             rec.stop()
 
 
-class WakeRecoveryTest(unittest.TestCase):
+class WakeRecoveryTest(_AudioStateTest):
     """Sleep/wake tears CoreAudio down under PortAudio: every open then fails with
     paInternalError even though a fresh process opens the same device fine."""
-
-    def setUp(self):
-        # A previously wedged close leaves the counter pinned on purpose; reset it
-        # so these tests aren't suppressed by leakage from another case.
-        import ba_ge.audio_sd as mod
-        mod._open_streams = 0
 
     @staticmethod
     def _poison(mod, fails):

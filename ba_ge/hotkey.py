@@ -7,9 +7,13 @@ single hold by HoldDebouncer, so on_start/on_stop each fire exactly once.
 
 from __future__ import annotations
 
+import logging
+
 from pynput import keyboard
 
 from .debounce import HoldDebouncer
+
+log = logging.getLogger("bage.hotkey")
 
 # String aliases -> pynput special keys. Built defensively: pynput's per-OS
 # backends don't all expose the same Key members (e.g. macOS lacks pause /
@@ -72,18 +76,42 @@ def _key_matches(key, target) -> bool:
     return False
 
 
+def _vk_of(key):
+    """Virtual keycode of a pynput Key/KeyCode, or None (e.g. from_char targets)."""
+    return getattr(getattr(key, "value", key), "vk", None)
+
+
 class HotkeyListener:
     def __init__(self, key_name, on_start, on_stop):
         self._target = resolve_key(key_name)
         self._debounce = HoldDebouncer(on_start, on_stop)
         self._listener = None
+        self._vk = _vk_of(self._target)  # refined from the first real key event
 
     def _on_press(self, key):
         if _key_matches(key, self._target):
+            vk = _vk_of(key)
+            if vk is not None:
+                self._vk = vk
             self._debounce.press()
 
     def _on_release(self, key):
         if _key_matches(key, self._target):
+            self._debounce.release()
+
+    def _on_tap_restored(self) -> None:
+        """macOS re-enabled a disabled event tap; a key-up may have been lost.
+
+        Without this a release that happened while the tap was off leaves the hold
+        "in progress" forever: the recording never ends (mic lit) and every later
+        press is swallowed as auto-repeat. Only acts on a definite "key is up".
+        """
+        if not self._debounce.held:
+            return
+        from . import platform
+        if platform.key_is_down(self._vk) is False:
+            log.warning("hotkey was released while the event tap was disabled — "
+                        "ending the hold now")
             self._debounce.release()
 
     def start(self) -> None:
@@ -93,9 +121,18 @@ class HotkeyListener:
         # platform.prewarm_macos_input_source). No-op off macOS.
         from . import platform
         platform.prewarm_macos_input_source()
-        self._listener = keyboard.Listener(
-            on_press=self._on_press, on_release=self._on_release)
+        self._listener = platform.make_keyboard_listener(
+            self._on_press, self._on_release, on_tap_restored=self._on_tap_restored)
         self._listener.start()
+
+    def key_is_down(self) -> bool | None:
+        """Whether the hotkey is physically held now (macOS); None if unknown."""
+        from . import platform
+        return platform.key_is_down(self._vk)
+
+    def reset(self) -> None:
+        """Forget a hold in progress (the app ended it without seeing the key-up)."""
+        self._debounce.cancel()
 
     def stop(self) -> None:
         self._debounce.cancel()
