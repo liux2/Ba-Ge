@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 
@@ -89,11 +90,53 @@ def _post_stt(audio: bytes, config, fields: dict, *, filename: str,
         raise TranscriptionError(f"Network error reaching ElevenLabs: {exc}") from exc
 
 
+_OPUS_BITRATE = "24k"      # wideband speech; transcript identical to WAV in testing
+_ENCODE_TIMEOUT = 10.0
+
+
+def to_opus(wav: bytes) -> bytes | None:
+    """WAV -> Ogg/Opus (~11x smaller), or None if ffmpeg can't do it.
+
+    Raw 16 kHz WAV is 32 KB per second of speech; on a slow uplink (measured
+    14-28 KB/s) that uploads SLOWER than real time and dictation stalls for
+    30-60 s. Opus at 24 kbps is ~3 KB/s with the same Scribe transcript. Any
+    failure (no ffmpeg, no libopus, bad input) falls back to sending the WAV."""
+    import subprocess
+
+    from . import platform
+
+    cmd = [platform.ffmpeg_exe(), "-hide_banner", "-loglevel", "error",
+           "-f", "wav", "-i", "pipe:0",
+           "-c:a", "libopus", "-b:a", _OPUS_BITRATE, "-application", "voip",
+           "-f", "ogg", "pipe:1"]
+    try:
+        proc = subprocess.run(cmd, input=wav, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, timeout=_ENCODE_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("opus encode unavailable (%s) — sending WAV", exc)
+        return None
+    if proc.returncode != 0 or not proc.stdout:
+        log.warning("opus encode failed (rc=%s: %s) — sending WAV", proc.returncode,
+                    proc.stderr.decode("utf-8", "replace").strip()[:200])
+        return None
+    return proc.stdout
+
+
 def transcribe(wav: bytes, config, *, timeout: float = 60.0) -> str:
-    """Dictation: WAV bytes -> transcript text."""
+    """Dictation: WAV bytes -> transcript text (uploaded as Opus when possible)."""
     fields = _base_fields(config)
-    payload = _post_stt(wav, config, fields, filename="audio.wav",
-                        content_type="audio/wav", timeout=timeout)
+    t0 = time.monotonic()
+    opus = to_opus(wav)
+    t1 = time.monotonic()
+    if opus:
+        audio, filename, ctype = opus, "audio.ogg", "audio/ogg"
+    else:
+        audio, filename, ctype = wav, "audio.wav", "audio/wav"
+    payload = _post_stt(audio, config, fields, filename=filename,
+                        content_type=ctype, timeout=timeout)
+    log.info("uploaded %d KB %s (wav %d KB, encode %d ms), response in %.1f s",
+             len(audio) // 1024, "opus" if opus else "wav", len(wav) // 1024,
+             (t1 - t0) * 1000, time.monotonic() - t1)
     text = payload.get("text")
     if not isinstance(text, str):
         raise TranscriptionError(f"Unexpected API response: {payload!r}")

@@ -83,5 +83,69 @@ class TranscribeTest(unittest.TestCase):
         self.assertIn(b"audio/mpeg", sent)
 
 
+def _wav(seconds=0.5, rate=16000):
+    import math
+    import struct
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(
+            struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / rate)))
+            for i in range(int(seconds * rate))))
+    return buf.getvalue()
+
+
+class OpusUploadTest(unittest.TestCase):
+    """Dictation uploads Opus (~11x smaller than WAV) and falls back to WAV."""
+
+    def _send(self, opus_result):
+        body = json.dumps({"text": "ok"}).encode()
+        with mock.patch("ba_ge.transcribe.to_opus", return_value=opus_result), \
+                mock.patch("urllib.request.urlopen", return_value=_Resp(body)) as m:
+            self.assertEqual(transcribe(b"RIFFwav", _cfg()), "ok")
+        return m.call_args.args[0].data
+
+    def test_sends_opus_when_encoding_works(self):
+        sent = self._send(b"OggSfake")
+        self.assertIn(b'filename="audio.ogg"', sent)
+        self.assertIn(b"Content-Type: audio/ogg", sent)
+        self.assertIn(b"OggSfake", sent)
+        self.assertNotIn(b"RIFFwav", sent)
+
+    def test_falls_back_to_wav(self):
+        sent = self._send(None)
+        self.assertIn(b'filename="audio.wav"', sent)
+        self.assertIn(b"RIFFwav", sent)
+
+    def test_missing_ffmpeg_returns_none(self):
+        from ba_ge.transcribe import to_opus
+        with mock.patch("ba_ge.platform.ffmpeg_exe", return_value="/nonexistent/ffmpeg"):
+            self.assertIsNone(to_opus(_wav()))
+
+    def test_garbage_input_returns_none(self):
+        from ba_ge import platform
+        from ba_ge.transcribe import to_opus
+        import shutil
+        if not shutil.which(platform.ffmpeg_exe()):
+            self.skipTest("ffmpeg not installed")
+        self.assertIsNone(to_opus(b"not a wav file"))
+
+    def test_real_encode_is_ogg_and_smaller(self):
+        from ba_ge import platform
+        from ba_ge.transcribe import to_opus
+        import shutil
+        if not shutil.which(platform.ffmpeg_exe()):
+            self.skipTest("ffmpeg not installed")
+        wav = _wav(2.0)
+        out = to_opus(wav)
+        if out is None:
+            self.skipTest("ffmpeg lacks libopus")
+        self.assertTrue(out.startswith(b"OggS"))
+        self.assertLess(len(out), len(wav) // 4)
+
+
 if __name__ == "__main__":
     unittest.main()
