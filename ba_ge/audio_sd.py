@@ -94,6 +94,17 @@ _PA_CODE = re.compile(r"PaErrorCode (-?\d+)")
 # asks PortAudio about device -1); it carries no PaErrorCode.
 _NO_DEFAULT_INPUT = "Error querying device -1"
 
+# PortAudio snapshots the device list AND the system default input once, at
+# Pa_Initialize, and never updates them. So with device="default", a mic plugged
+# in (or picked as the macOS default) after launch is ignored: the app keeps
+# recording the OLD default. Real case: DJI receiver connected after launch, app
+# kept capturing the 1-channel MacBook mic across the room — -47..-74 dBFS, and
+# Scribe returned "[whispering]". So each new stream re-snapshots first (~7 ms),
+# at most once per this many seconds so rapid dictations don't each run
+# Pa_Terminate/Pa_Initialize through the CoreAudio layer that can wedge.
+_REFRESH_EVERY = 5.0
+_last_refresh: float | None = None  # monotonic time of the last device re-snapshot
+
 # Set once this process's PortAudio/CoreAudio is known to be unusable (a wedged
 # stop/close, a stalled re-init, an open that never returned): only a relaunch
 # clears it. Process-wide on purpose — it is the audio layer that is broken, not
@@ -305,7 +316,21 @@ class SdRecorder:
             # Abandoned half-way through Pa_Terminate/Pa_Initialize: nothing in this
             # process can use PortAudio safely any more.
             mark_poisoned("PortAudio re-init did not finish within 3s")
+        else:
+            global _last_refresh
+            _last_refresh = time.monotonic()
         return bool(finished)
+
+    def _refresh_devices(self) -> None:
+        """Re-snapshot devices before an open so "default" means the CURRENT default
+        (see _REFRESH_EVERY). Throttled; a skipped or refused refresh (capture
+        active) just keeps the old snapshot. Caller holds _pa_lock."""
+        if _last_refresh is not None and time.monotonic() - _last_refresh < _REFRESH_EVERY:
+            return
+        began = time.monotonic()
+        if self._reinit_portaudio():
+            log.info("audio devices re-scanned in %.0f ms",
+                     (time.monotonic() - began) * 1000)
 
     def _open_stream(self, device, retry: bool = False) -> None:
         import sounddevice as sd
@@ -315,6 +340,11 @@ class SdRecorder:
                 # Flagged while we waited for the lock (e.g. a Settings refresh
                 # stalled): don't call into a PortAudio that may be mid-teardown.
                 raise AudioError(f"audio is unusable until Ba-Ge restarts ({_poisoned})")
+            if not retry:
+                self._refresh_devices()
+                if _poisoned is not None:  # the refresh itself stalled
+                    raise AudioError(
+                        f"audio is unusable until Ba-Ge restarts ({_poisoned})")
             channels = self._capture_channels(device)
             began = time.monotonic()
             stream = None

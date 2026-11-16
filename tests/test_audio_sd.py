@@ -115,6 +115,9 @@ class _AudioStateTest(unittest.TestCase):
         self._mod = mod
         mod._open_streams = 0
         mod._poisoned = None
+        # Pretend devices were just re-scanned, so the pre-open refresh stays out
+        # of cases that aren't about it (the fake module has no _terminate).
+        mod._last_refresh = float("inf")
         # Track every recorder a case creates: one left with an idle-release timer
         # pending would otherwise close its stream seconds later, in the middle of
         # an unrelated case, and un-count that case's stream.
@@ -485,3 +488,71 @@ class WakeRecoveryTest(_AudioStateTest):
                 self.assertEqual(calls, [])  # never touched PortAudio
             finally:
                 mod._open_streams = 0
+
+
+class DefaultDeviceRefreshTest(_AudioStateTest):
+    """PortAudio snapshots the default input at init; a mic connected after launch
+    must still be what "default" records (real case: DJI plugged in, app kept
+    capturing the MacBook mic and Scribe heard only "[whispering]")."""
+
+    def _rescan_switches_default(self, sd):
+        """Fake a terminate/init that discovers a newly-connected 2-channel mic."""
+        mod = sys.modules["sounddevice"]
+        scans = []
+        mod._terminate = lambda: None
+
+        def initialize():
+            scans.append(1)
+            sd.max_input_channels = 2       # the new default (DJI receiver)
+        mod._initialize = initialize
+        return scans
+
+    def test_new_default_mic_is_picked_up_before_recording(self):
+        with _SdPatch(max_input_channels=1) as sd:
+            scans = self._rescan_switches_default(sd)
+            self._mod._last_refresh = None   # never re-scanned in this process
+            rec = SdRecorder(_cfg())
+            rec.start()
+            self.assertEqual(scans, [1])
+            self.assertEqual(rec._capture_ch, 2)  # opened the NEW device's layout
+            rec.stop()
+
+    def test_rescans_are_throttled(self):
+        with _SdPatch() as sd:
+            scans = self._rescan_switches_default(sd)
+            self._mod._last_refresh = None
+            rec = SdRecorder(_cfg())
+            for _ in range(3):               # rapid back-to-back dictations
+                rec.start()
+                rec.stop()
+            self.assertEqual(scans, [1])
+
+    def test_rescans_again_once_the_window_passes(self):
+        with _SdPatch() as sd:
+            scans = self._rescan_switches_default(sd)
+            self._mod._last_refresh = None
+            rec = SdRecorder(_cfg())
+            rec.start()
+            rec.stop()
+            self._mod._last_refresh -= self._mod._REFRESH_EVERY + 1
+            rec.start()
+            rec.stop()
+            self.assertEqual(scans, [1, 1])
+
+    def test_stalled_rescan_refuses_to_record(self):
+        import ba_ge.audio_sd as mod
+        with _SdPatch():
+            mod._last_refresh = None
+            original = mod.SdRecorder._reinit_portaudio
+
+            def stall(rec):
+                mod.mark_poisoned("PortAudio re-init did not finish within 3s")
+                return False
+            mod.SdRecorder._reinit_portaudio = stall
+            try:
+                rec = SdRecorder(_cfg())
+                with self.assertRaises(AudioError):
+                    rec.start()
+                self.assertTrue(rec.stalled)   # app.py relaunches
+            finally:
+                mod.SdRecorder._reinit_portaudio = original
