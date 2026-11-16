@@ -24,6 +24,11 @@ class _Resp(io.BytesIO):
 
 
 class TranscribeTest(unittest.TestCase):
+    def setUp(self):
+        p = mock.patch("ba_ge.transcribe.time.sleep")
+        p.start()
+        self.addCleanup(p.stop)
+
     def test_returns_text_and_builds_request(self):
         body = json.dumps({"text": "hello world", "language_code": "eng"}).encode()
         with mock.patch("urllib.request.urlopen", return_value=_Resp(body)) as m:
@@ -145,6 +150,88 @@ class OpusUploadTest(unittest.TestCase):
             self.skipTest("ffmpeg lacks libopus")
         self.assertTrue(out.startswith(b"OggS"))
         self.assertLess(len(out), len(wav) // 4)
+
+
+class RetryTest(unittest.TestCase):
+    """Dictation retries a dropped request instead of losing the utterance."""
+
+    def setUp(self):
+        p = mock.patch("ba_ge.transcribe.time.sleep")   # no real pauses
+        p.start()
+        self.addCleanup(p.stop)
+        o = mock.patch("ba_ge.transcribe.to_opus", return_value=None)
+        o.start()
+        self.addCleanup(o.stop)
+
+    @staticmethod
+    def _ok():
+        return _Resp(json.dumps({"text": "hello"}).encode())
+
+    @staticmethod
+    def _http(code):
+        return urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(b'{"detail":"d"}'))
+
+    def test_network_drop_is_retried(self):
+        import ssl
+        drop = ssl.SSLEOFError("EOF occurred in violation of protocol")
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=[drop, self._ok()]) as m:
+            self.assertEqual(transcribe(b"RIFF", _cfg()), "hello")
+        self.assertEqual(m.call_count, 2)
+
+    def test_remote_disconnect_is_retried(self):
+        import http.client
+        gone = http.client.RemoteDisconnected("Remote end closed connection")
+        with mock.patch("urllib.request.urlopen", side_effect=[gone, self._ok()]):
+            self.assertEqual(transcribe(b"RIFF", _cfg()), "hello")
+
+    def test_server_error_and_rate_limit_are_retried(self):
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=[self._http(503), self._http(429), self._ok()]) as m:
+            self.assertEqual(transcribe(b"RIFF", _cfg()), "hello")
+        self.assertEqual(m.call_count, 3)
+
+    def test_gives_up_after_three_attempts(self):
+        err = urllib.error.URLError("connection refused")
+        with mock.patch("urllib.request.urlopen", side_effect=err) as m:
+            with self.assertRaises(TranscriptionError) as ctx:
+                transcribe(b"RIFF", _cfg())
+        self.assertEqual(m.call_count, 3)
+        self.assertIn("Network error", str(ctx.exception))
+
+    def test_client_errors_are_not_retried(self):
+        for code in (400, 401, 422):
+            with mock.patch("urllib.request.urlopen",
+                            side_effect=self._http(code)) as m:
+                with self.assertRaises(TranscriptionError):
+                    transcribe(b"RIFF", _cfg())
+            self.assertEqual(m.call_count, 1, code)
+
+    def test_no_retry_once_the_budget_is_spent(self):
+        """A retry that could not finish before app.py's 90 s reset is skipped."""
+        import ba_ge.transcribe as tr
+        err = urllib.error.URLError("timed out")
+        clock = iter([0.0, 0.0, 70.0, 70.0, 70.0])   # first attempt ate 70 of 75 s
+        with mock.patch.object(tr.time, "monotonic", side_effect=lambda: next(clock)), \
+                mock.patch("urllib.request.urlopen", side_effect=err) as m:
+            with self.assertRaises(TranscriptionError):
+                tr._post_stt(b"x", _cfg(), {}, filename="a.wav", content_type="audio/wav",
+                             timeout=60, attempts=3, budget=75)
+        self.assertEqual(m.call_count, 1)
+
+    def test_attempt_timeout_is_capped_to_the_budget(self):
+        import ba_ge.transcribe as tr
+        with mock.patch("urllib.request.urlopen", return_value=self._ok()) as m:
+            tr._post_stt(b"x", _cfg(), {}, filename="a.wav", content_type="audio/wav",
+                         timeout=60, attempts=3, budget=20)
+        self.assertLessEqual(m.call_args.kwargs["timeout"], 20)
+
+    def test_file_transcription_does_not_retry(self):
+        err = urllib.error.URLError("connection refused")
+        with mock.patch("urllib.request.urlopen", side_effect=err) as m:
+            with self.assertRaises(TranscriptionError):
+                transcribe_verbose(b"AUDIO", _cfg())
+        self.assertEqual(m.call_count, 1)
 
 
 if __name__ == "__main__":

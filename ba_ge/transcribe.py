@@ -59,11 +59,48 @@ def _multipart(fields: dict, audio: bytes, filename: str, content_type: str) -> 
     return bytes(out)
 
 
+class _Retryable(TranscriptionError):
+    """A failure that may succeed on a second try (network drop, 5xx, 429)."""
+
+
+# Retries for dictation. A flaky link/proxy drops a request now and then
+# ("Remote end closed connection", "SSL: UNEXPECTED_EOF_WHILE_READING") and the
+# utterance was simply lost. Each retry re-sends the whole (small, Opus) clip.
+# The budget keeps every attempt inside app.py's _BUSY_TIMEOUT (90 s), which
+# force-resets a hung request; a retry that couldn't finish in time is pointless.
+_RETRY_ATTEMPTS = 3
+_RETRY_BUDGET = 75.0
+_RETRY_PAUSE = 1.0
+_MIN_ATTEMPT_TIME = 10.0   # don't start an attempt with less time than this left
+
+
 def _post_stt(audio: bytes, config, fields: dict, *, filename: str,
-              content_type: str, timeout: float) -> dict:
+              content_type: str, timeout: float, attempts: int = 1,
+              budget: float | None = None) -> dict:
+    """POST to Scribe. With attempts > 1, retry network/5xx/429 failures within
+    ``budget`` seconds in total (each attempt's timeout is capped to what's left)."""
     if not config.api_key_valid:
         raise TranscriptionError("ElevenLabs API key is not configured.")
     body = _multipart(fields, audio, filename, content_type)
+    deadline = None if budget is None else time.monotonic() + budget
+    for attempt in range(1, attempts + 1):
+        this_timeout = timeout
+        if deadline is not None:
+            this_timeout = min(timeout, deadline - time.monotonic())
+        try:
+            return _post_once(body, config, this_timeout)
+        except _Retryable as exc:
+            left = None if deadline is None else deadline - time.monotonic()
+            if attempt == attempts or (
+                    left is not None and left < _MIN_ATTEMPT_TIME + _RETRY_PAUSE):
+                raise TranscriptionError(str(exc)) from exc
+            log.warning("transcription attempt %d/%d failed (%s) — retrying",
+                        attempt, attempts, exc)
+            time.sleep(_RETRY_PAUSE)
+    raise AssertionError("unreachable")
+
+
+def _post_once(body: bytes, config, timeout: float) -> dict:
     url = config.api_base.rstrip("/") + "/v1/speech-to-text"
     req = urllib.request.Request(
         url,
@@ -83,11 +120,13 @@ def _post_stt(audio: bytes, config, fields: dict, *, filename: str,
         if exc.code in (401, 403):
             raise TranscriptionError(
                 f"Authentication failed ({exc.code}). Check your API key. {detail}") from exc
+        if exc.code == 429 or exc.code >= 500:
+            raise _Retryable(f"ElevenLabs API error {exc.code}: {detail}") from exc
         raise TranscriptionError(f"ElevenLabs API error {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
-        raise TranscriptionError(f"Network error reaching ElevenLabs: {exc.reason}") from exc
+        raise _Retryable(f"Network error reaching ElevenLabs: {exc.reason}") from exc
     except (TimeoutError, OSError) as exc:
-        raise TranscriptionError(f"Network error reaching ElevenLabs: {exc}") from exc
+        raise _Retryable(f"Network error reaching ElevenLabs: {exc}") from exc
 
 
 _OPUS_BITRATE = "24k"      # wideband speech; transcript identical to WAV in testing
@@ -133,7 +172,8 @@ def transcribe(wav: bytes, config, *, timeout: float = 60.0) -> str:
     else:
         audio, filename, ctype = wav, "audio.wav", "audio/wav"
     payload = _post_stt(audio, config, fields, filename=filename,
-                        content_type=ctype, timeout=timeout)
+                        content_type=ctype, timeout=timeout,
+                        attempts=_RETRY_ATTEMPTS, budget=_RETRY_BUDGET)
     log.info("uploaded %d KB %s (wav %d KB, encode %d ms), response in %.1f s",
              len(audio) // 1024, "opus" if opus else "wav", len(wav) // 1024,
              (t1 - t0) * 1000, time.monotonic() - t1)
