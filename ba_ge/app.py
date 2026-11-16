@@ -350,6 +350,28 @@ class DictationApp:
 
     # ---- worker ----
 
+    def _keep_recording(self, wav: bytes) -> Path | None:
+        """Debug aid ([debug] keep_recordings = N): save the clip exactly as it is
+        sent, keeping only the newest N, so a bad transcript can be replayed and
+        re-transcribed. Off by default — these are recordings of the user's voice."""
+        keep = getattr(self.config, "keep_recordings", 0)
+        if keep <= 0:
+            return None
+        folder = paths.cache_dir() / "recordings"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            now = time.time()
+            path = folder / (time.strftime("take-%Y%m%d-%H%M%S", time.localtime(now))
+                             + f"-{int(now * 1000) % 1000:03d}.wav")
+            path.write_bytes(wav)
+            for old in sorted(folder.glob("take-*.wav"))[:-keep]:
+                old.unlink(missing_ok=True)
+        except OSError:
+            log.warning("could not keep the recording", exc_info=True)
+            return None
+        log.info("kept recording: %s", path.name)
+        return path
+
     def _process(self, gen: int) -> None:
         try:
             finished, wav = platform.call_with_timeout(self.recorder.stop, _STOP_TIMEOUT)
@@ -379,6 +401,7 @@ class DictationApp:
             # Still transcribe: the words are usually partly recoverable, and the
             # user wants their text. The warning explains why it may be wrong.
             self._warn_about_levels(levels)
+            self._keep_recording(wav)
             text = (self.transcribe_fn(wav) or "").strip()
             log.info("transcript: %r", text)  # raw text from Scribe, before typing
             _log_transcript(text, getattr(self.injector, "backend", ""))
@@ -540,6 +563,7 @@ class DictationApp:
             ensure_device()
         self._start_hotkey()
         self._set_state(State.IDLE)
+        self._prewarm_audio()
 
         missing = platform.missing_permissions()  # macOS TCC; [] elsewhere
         if missing:
@@ -569,6 +593,14 @@ class DictationApp:
             self.indicator.run_main_loop()
         finally:
             self._shutdown()
+
+    def _prewarm_audio(self) -> None:
+        """Load the audio layer in the background so the first dictation after
+        launch starts recording at once (it used to take 4-6.5 s)."""
+        prewarm = getattr(self.recorder, "prewarm", None)
+        if prewarm is not None:
+            threading.Thread(target=prewarm, name="bage-audio-prewarm",
+                             daemon=True).start()
 
     def _start_hotkey(self) -> None:
         from .hotkey import HotkeyListener  # lazy: requires pynput

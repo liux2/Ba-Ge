@@ -140,3 +140,16 @@ class ConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeepRecordingsConfigTest(unittest.TestCase):
+    def test_off_by_default_and_round_trips_through_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "c.toml"
+            self.assertEqual(load_config(config_path=p, env={}).keep_recordings, 0)
+            p.write_text('[debug]\nkeep_recordings = 7\n')
+            cfg = load_config(config_path=p, env={})
+            self.assertEqual(cfg.keep_recordings, 7)
+            save_config(cfg, p)   # the Settings window must not drop the opt-in
+            self.assertEqual(load_config(config_path=p, env={}).keep_recordings, 7)
+            self.assertNotIn("[debug]", dump_toml(Config()))

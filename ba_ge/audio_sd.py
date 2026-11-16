@@ -332,10 +332,38 @@ class SdRecorder:
             log.info("audio devices re-scanned in %.0f ms",
                      (time.monotonic() - began) * 1000)
 
+    def prewarm(self) -> None:
+        """Load PortAudio and enumerate devices now, at launch, instead of on the
+        first key press. The first open in a fresh app has measured 4-6.5 s, all of
+        it spent before the mic was live, so the first words of the first dictation
+        were lost. Never opens a stream, so the mic indicator stays off."""
+        began = time.monotonic()
+        try:
+            import sounddevice as sd
+            imported = time.monotonic()
+            with _pa_lock:
+                if _poisoned is not None or capture_active():
+                    return
+                sd.query_devices()
+                self._capture_channels(self._resolve_device())
+                global _last_refresh
+                _last_refresh = time.monotonic()
+        except Exception:
+            log.warning("audio pre-warm failed", exc_info=True)
+            return
+        log.info("audio pre-warmed in %.0f ms (import %.0f ms)",
+                 (time.monotonic() - began) * 1000, (imported - began) * 1000)
+
     def _open_stream(self, device, retry: bool = False) -> None:
+        t0 = time.monotonic()
         import sounddevice as sd
+        t_import = time.monotonic()
 
         with _pa_lock:
+            waited = time.monotonic() - t_import
+            if (t_import - t0) + waited > 0.5:
+                log.warning("audio layer slow before open: import %.0f ms, "
+                            "lock wait %.0f ms", (t_import - t0) * 1000, waited * 1000)
             if _poisoned is not None:
                 # Flagged while we waited for the lock (e.g. a Settings refresh
                 # stalled): don't call into a PortAudio that may be mid-teardown.

@@ -114,3 +114,40 @@ class WarningTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeepRecordingsTest(unittest.TestCase):
+    """[debug] keep_recordings: off by default (these are voice recordings);
+    when on, the clip is saved exactly as sent and only the newest N are kept."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        self.dir = Path(tempfile.mkdtemp())
+        patcher = mock.patch("ba_ge.app.paths.cache_dir", return_value=self.dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _dictate(self, wav, keep):
+        app, _ = _app(wav, [])
+        app.config.keep_recordings = keep
+        app._state = app.state.__class__.RECORDING
+        app._end_recording()
+
+    def _takes(self):
+        return sorted((self.dir / "recordings").glob("take-*.wav"))
+
+    def test_off_by_default(self):
+        self._dictate(_wav([8000, -8000] * 4000), keep=0)
+        self.assertFalse((self.dir / "recordings").exists())
+
+    def test_saves_the_clip_as_sent_and_keeps_only_the_newest(self):
+        import time as _time
+        clips = [_wav([1000 * (i + 1), -1000 * (i + 1)] * 4000) for i in range(4)]
+        for clip in clips:
+            self._dictate(clip, keep=2)
+            _time.sleep(0.002)  # distinct millisecond in the file name
+        takes = self._takes()
+        self.assertEqual(len(takes), 2)
+        self.assertEqual([t.read_bytes() for t in takes], clips[2:])

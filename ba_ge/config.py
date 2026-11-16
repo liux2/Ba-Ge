@@ -133,6 +133,7 @@ class Config:
     inject_backend: str = "paste"  # paste at cursor (X11, clipboard-coordinated)
     ui_scale: float = 0.0  # UI zoom; 0 = auto-detect from display DPI
     keyterms: list = field(default_factory=list)  # bias recognition toward these terms
+    keep_recordings: int = 0  # debug: keep the last N dictation clips on disk (0 = off)
     api_base: str = "https://api.elevenlabs.io"
 
     @property
@@ -194,6 +195,10 @@ def _apply_toml(cfg: Config, data: dict) -> None:
         cfg.key_delay_ms = v
     if "backend" in inj:
         cfg.inject_backend = str(inj["backend"])
+
+    dbg = data.get("debug", {})
+    if (v := _num(dbg, "keep_recordings", int)) is not None:
+        cfg.keep_recordings = max(0, v)
 
     ui = data.get("ui", {})
     if (v := _num(ui, "scale", float)) is not None:
@@ -267,6 +272,9 @@ def dump_toml(cfg: Config) -> str:
         f"key_delay_ms = {cfg.key_delay_ms}\n\n"
         "[ui]\n"
         f"scale = {cfg.ui_scale}   # 0 = auto-detect from display DPI (e.g. 1.5, 2.0)\n"
+        + (f"\n[debug]\nkeep_recordings = {cfg.keep_recordings}   "
+           "# keep the last N dictation clips (0 = off)\n"
+           if cfg.keep_recordings else "")
     )
 
 

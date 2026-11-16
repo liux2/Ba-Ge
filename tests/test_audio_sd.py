@@ -556,3 +556,24 @@ class DefaultDeviceRefreshTest(_AudioStateTest):
                 self.assertTrue(rec.stalled)   # app.py relaunches
             finally:
                 mod.SdRecorder._reinit_portaudio = original
+
+
+class PrewarmTest(_AudioStateTest):
+    """The first open in a fresh app took 4-6.5 s, losing the first words; the
+    audio layer is now loaded at launch — without ever opening a stream."""
+
+    def test_prewarm_loads_devices_without_opening_the_mic(self):
+        with _SdPatch(max_input_channels=2) as sd:
+            self._mod._last_refresh = None
+            rec = SdRecorder(_cfg())
+            rec.prewarm()
+            self.assertEqual(sd.opened, [])            # mic indicator stays off
+            self.assertIsNotNone(self._mod._last_refresh)  # first press skips re-scan
+
+    def test_prewarm_is_skipped_once_audio_is_poisoned(self):
+        with _SdPatch() as sd:
+            self._mod._last_refresh = None
+            self._mod._poisoned = "test"
+            SdRecorder(_cfg()).prewarm()
+            self.assertIsNone(self._mod._last_refresh)
+            self.assertEqual(sd.opened, [])
